@@ -9,10 +9,11 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
+    let staticError: string | null = null;
     const [{ vehicles, tripUpdates }, staticResult] = await Promise.all([
       fetchKeioBusFeeds(),
       getStaticGtfs().catch((e) => {
-        console.warn("static GTFS unavailable:", e);
+        staticError = e instanceof Error ? e.message : String(e);
         return null;
       }),
     ]);
@@ -110,6 +111,7 @@ export async function GET() {
       vehicleCount: vehicles.entity.length,
       tripUpdateCount: tripUpdates?.entity.length ?? 0,
       staticAvailable: stat !== null,
+      staticError,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";
