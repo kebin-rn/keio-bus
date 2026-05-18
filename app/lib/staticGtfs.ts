@@ -17,8 +17,8 @@ export interface RouteInfo {
   textColor?: string;
 }
 
-export interface AgencyInfo {
-  agencyId: string;
+export interface OfficeInfo {
+  officeId: string;
   name: string;
 }
 
@@ -34,10 +34,11 @@ export interface TripInfo {
   routeId?: string;
   headsign?: string;
   directionId?: number;
+  officeId?: string;
 }
 
 export interface StaticGtfs {
-  agencies: Record<string, AgencyInfo>;
+  offices: Record<string, OfficeInfo>;
   routes: Record<string, RouteInfo>;
   stops: Record<string, StopInfo>;
   trips: Record<string, TripInfo>;
@@ -119,15 +120,15 @@ async function loadStaticGtfs(): Promise<StaticGtfs> {
 
   const zip = await JSZip.loadAsync(buf);
 
-  const [agencyCsv, routesCsv, stopsCsv, tripsCsv] = await Promise.all([
-    zip.file("agency.txt")?.async("string") ?? Promise.resolve(""),
+  const [officeCsv, routesCsv, stopsCsv, tripsCsv] = await Promise.all([
+    zip.file("office_jp.txt")?.async("string") ?? Promise.resolve(""),
     zip.file("routes.txt")?.async("string") ?? Promise.resolve(""),
     zip.file("stops.txt")?.async("string") ?? Promise.resolve(""),
     zip.file("trips.txt")?.async("string") ?? Promise.resolve(""),
   ]);
 
   return {
-    agencies: parseAgencies(agencyCsv),
+    offices: parseOffices(officeCsv),
     routes: parseRoutes(routesCsv),
     stops: parseStops(stopsCsv),
     trips: parseTrips(tripsCsv),
@@ -180,13 +181,13 @@ function splitCsvLine(line: string): string[] {
   return out;
 }
 
-function parseAgencies(csv: string): Record<string, AgencyInfo> {
-  const out: Record<string, AgencyInfo> = {};
+function parseOffices(csv: string): Record<string, OfficeInfo> {
+  const out: Record<string, OfficeInfo> = {};
   for (const row of parseCsv(csv)) {
-    const id = row["agency_id"];
-    const name = row["agency_name"];
+    const id = row["office_id"];
+    const name = row["office_name"];
     if (!id || !name) continue;
-    out[id] = { agencyId: id, name };
+    out[id] = { officeId: id, name };
   }
   return out;
 }
@@ -235,6 +236,7 @@ function parseTrips(csv: string): Record<string, TripInfo> {
       directionId: row["direction_id"]
         ? Number(row["direction_id"])
         : undefined,
+      officeId: row["jp_office_id"] || undefined,
     };
   }
   return out;

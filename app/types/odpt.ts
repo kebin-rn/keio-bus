@@ -20,6 +20,8 @@ export interface OdptBus {
   "odpt:occupancyStatus"?: string;
   "odpt:startingBusstopPole"?: string;
   "odpt:terminalBusstopPole"?: string;
+  officeId?: string;
+  tripHeadsign?: string;
 }
 
 export interface OdptBusroutePatternStop {
@@ -40,10 +42,9 @@ export interface OdptBusroutePattern {
   "odpt:busroute"?: string;
   "odpt:direction"?: string;
   "odpt:pattern"?: OdptBusroutePatternStop[];
-  agencyId?: string;
 }
 
-export interface AgencyEntry {
+export interface OfficeEntry {
   name: string;
 }
 

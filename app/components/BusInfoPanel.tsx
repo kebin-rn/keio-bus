@@ -2,9 +2,9 @@
 
 import { useMemo } from "react";
 import type {
-  AgencyEntry,
   OdptBus,
   OdptBusroutePattern,
+  OfficeEntry,
 } from "@/app/types/odpt";
 import { classifyDelay, shortenPatternId, shortenStopId } from "@/app/lib/format";
 
@@ -13,11 +13,11 @@ interface Props {
   allBuses: OdptBus[];
   patternMap: Record<string, OdptBusroutePattern>;
   stopMap: Record<string, { title: string; lat?: number; lng?: number }>;
-  agencyMap: Record<string, AgencyEntry>;
+  officeMap: Record<string, OfficeEntry>;
   selectedBusId: string | null;
   onSelectBus: (id: string | null) => void;
-  agencyFilter: string;
-  onChangeAgencyFilter: (v: string) => void;
+  officeFilter: string;
+  onChangeOfficeFilter: (v: string) => void;
   routeFilter: string;
   onChangeRouteFilter: (v: string) => void;
 }
@@ -27,11 +27,11 @@ export default function BusInfoPanel({
   allBuses,
   patternMap,
   stopMap,
-  agencyMap,
+  officeMap,
   selectedBusId,
   onSelectBus,
-  agencyFilter,
-  onChangeAgencyFilter,
+  officeFilter,
+  onChangeOfficeFilter,
   routeFilter,
   onChangeRouteFilter,
 }: Props) {
@@ -52,21 +52,20 @@ export default function BusInfoPanel({
     return { total: buses.length, onTime, minor, major, early, unknown };
   }, [buses]);
 
-  const agencyOptions = useMemo(() => {
+  const officeOptions = useMemo(() => {
     const counts: Record<string, { name: string; count: number }> = {};
     for (const b of allBuses) {
-      const pid = b["odpt:busroutePattern"];
-      const aid = pid ? patternMap[pid]?.agencyId : undefined;
-      if (!aid) continue;
-      const name = agencyMap[aid]?.name || aid;
-      counts[aid] = counts[aid]
-        ? { name, count: counts[aid].count + 1 }
+      const oid = b.officeId;
+      if (!oid) continue;
+      const name = officeMap[oid]?.name || oid;
+      counts[oid] = counts[oid]
+        ? { name, count: counts[oid].count + 1 }
         : { name, count: 1 };
     }
     return Object.entries(counts)
       .map(([id, v]) => ({ id, ...v }))
       .sort((a, b) => a.name.localeCompare(b.name, "ja"));
-  }, [allBuses, patternMap, agencyMap]);
+  }, [allBuses, officeMap]);
 
   const routeOptions = useMemo(() => {
     const counts: Record<string, { title: string; count: number }> = {};
@@ -130,7 +129,7 @@ export default function BusInfoPanel({
         </div>
       </div>
 
-      {agencyOptions.length > 0 && (
+      {officeOptions.length > 0 && (
         <div style={{ padding: "12px 18px", borderBottom: "1px solid #1e293b" }}>
           <label
             style={{
@@ -143,8 +142,8 @@ export default function BusInfoPanel({
             営業所で絞り込み
           </label>
           <select
-            value={agencyFilter}
-            onChange={(e) => onChangeAgencyFilter(e.target.value)}
+            value={officeFilter}
+            onChange={(e) => onChangeOfficeFilter(e.target.value)}
             style={{
               width: "100%",
               padding: "8px 10px",
@@ -155,9 +154,9 @@ export default function BusInfoPanel({
             }}
           >
             <option value="">すべての営業所 ({allBuses.length}台)</option>
-            {agencyOptions.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name} ({a.count}台)
+            {officeOptions.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name} ({o.count}台)
               </option>
             ))}
           </select>

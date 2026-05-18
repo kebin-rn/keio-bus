@@ -2,9 +2,9 @@ import { NextResponse } from "next/server";
 import { buildTripInfo, fetchKeioBusFeeds } from "@/app/lib/gtfsrt";
 import { getStaticGtfsSync } from "@/app/lib/staticGtfs";
 import type {
-  AgencyEntry,
   OdptBus,
   OdptBusroutePattern,
+  OfficeEntry,
 } from "@/app/types/odpt";
 
 type StopEntry = { title: string; lat?: number; lng?: number };
@@ -24,6 +24,7 @@ export async function GET() {
     const buses: OdptBus[] = [];
     const usedRouteIds = new Set<string>();
     const usedStopIds = new Set<string>();
+    const usedOfficeIds = new Set<string>();
 
     for (const ent of vehicles.entity) {
       const v = ent.vehicle;
@@ -41,9 +42,11 @@ export async function GET() {
         v.trip?.routeId || rtTrip?.routeId || staticTrip?.routeId || undefined;
       const nextStopId =
         v.stopId || rtTrip?.nextStopId || undefined;
+      const officeId = staticTrip?.officeId;
 
       if (routeId) usedRouteIds.add(routeId);
       if (nextStopId) usedStopIds.add(nextStopId);
+      if (officeId) usedOfficeIds.add(officeId);
 
       const id = v.vehicle?.id || ent.id || `${pos.latitude},${pos.longitude}`;
       const tsRaw = v.timestamp;
@@ -73,12 +76,14 @@ export async function GET() {
             : undefined,
         "odpt:delay": rtTrip?.delay,
         "odpt:vehicleNumber": v.vehicle?.label || v.vehicle?.id || undefined,
+        officeId,
+        tripHeadsign: staticTrip?.headsign,
       });
     }
 
     const patternMap: Record<string, OdptBusroutePattern> = {};
     const stopMap: Record<string, StopEntry> = {};
-    const agencyMap: Record<string, AgencyEntry> = {};
+    const officeMap: Record<string, OfficeEntry> = {};
 
     if (stat) {
       usedRouteIds.forEach((rid) => {
@@ -95,16 +100,17 @@ export async function GET() {
           "owl:sameAs": rid,
           "odpt:operator": "odpt.Operator:KeioBus",
           "dc:title": title,
-          agencyId: r.agencyId,
         };
-        if (r.agencyId && stat.agencies[r.agencyId]) {
-          agencyMap[r.agencyId] = { name: stat.agencies[r.agencyId].name };
-        }
       });
       usedStopIds.forEach((sid) => {
         const s = stat.stops[sid];
         if (!s) return;
         stopMap[sid] = { title: s.name, lat: s.lat, lng: s.lng };
+      });
+      usedOfficeIds.forEach((oid) => {
+        const o = stat.offices[oid];
+        if (!o) return;
+        officeMap[oid] = { name: o.name };
       });
     }
 
@@ -112,7 +118,7 @@ export async function GET() {
       buses,
       patternMap,
       stopMap,
-      agencyMap,
+      officeMap,
       fetchedAt: new Date().toISOString(),
       vehicleCount: vehicles.entity.length,
       tripUpdateCount: tripUpdates?.entity.length ?? 0,
