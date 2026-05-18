@@ -1,16 +1,28 @@
 import JSZip from "jszip";
 
-const STATIC_GTFS_URL =
-  "https://api.odpt.org/api/v4/files/odpt_KeioBus_AllLines_gtfs.zip";
+const CANDIDATE_URLS = [
+  "https://api.odpt.org/api/v4/files/odpt_KeioBus_AllLines_gtfs.zip",
+  "https://api.odpt.org/api/v4/files/odpt_KeioBus_AllLines.zip",
+  "https://api.odpt.org/api/v4/files/keio_bus_all_lines.zip",
+  "https://api.odpt.org/api/v4/gtfs/static/odpt_KeioBus_AllLines.zip",
+  "https://api.odpt.org/api/v4/gtfs/odpt_KeioBus_AllLines.zip",
+  "https://api.odpt.org/api/v4/gtfs/odpt_KeioBus_AllLines",
+];
 
 const TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface RouteInfo {
   routeId: string;
+  agencyId?: string;
   shortName?: string;
   longName?: string;
   color?: string;
   textColor?: string;
+}
+
+export interface AgencyInfo {
+  agencyId: string;
+  name: string;
 }
 
 export interface StopInfo {
@@ -28,10 +40,12 @@ export interface TripInfo {
 }
 
 export interface StaticGtfs {
+  agencies: Record<string, AgencyInfo>;
   routes: Record<string, RouteInfo>;
   stops: Record<string, StopInfo>;
   trips: Record<string, TripInfo>;
   loadedAt: number;
+  sourceUrl: string;
 }
 
 let cache: StaticGtfs | null = null;
@@ -57,27 +71,54 @@ async function loadStaticGtfs(): Promise<StaticGtfs> {
   const key = process.env.ODPT_CONSUMER_KEY;
   if (!key) throw new Error("ODPT_CONSUMER_KEY is not set");
 
-  const res = await fetch(
-    `${STATIC_GTFS_URL}?acl:consumerKey=${encodeURIComponent(key)}`,
-    { cache: "no-store" },
-  );
-  if (!res.ok) {
-    throw new Error(`static GTFS ${res.status}`);
+  const errors: string[] = [];
+  let buf: ArrayBuffer | null = null;
+  let usedUrl = "";
+
+  for (const url of CANDIDATE_URLS) {
+    const full = `${url}?acl:consumerKey=${encodeURIComponent(key)}`;
+    try {
+      const res = await fetch(full, { cache: "no-store" });
+      if (!res.ok) {
+        errors.push(`${url} → ${res.status}`);
+        continue;
+      }
+      const contentType = res.headers.get("content-type") || "";
+      const candidate = await res.arrayBuffer();
+      const head = new Uint8Array(candidate.slice(0, 4));
+      const isZip = head[0] === 0x50 && head[1] === 0x4b;
+      if (!isZip) {
+        errors.push(`${url} → not a zip (${contentType})`);
+        continue;
+      }
+      buf = candidate;
+      usedUrl = url;
+      break;
+    } catch (e) {
+      errors.push(`${url} → ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
-  const buf = await res.arrayBuffer();
+
+  if (!buf) {
+    throw new Error(`no static GTFS URL worked: ${errors.join("; ")}`);
+  }
+
   const zip = await JSZip.loadAsync(buf);
 
-  const [routesCsv, stopsCsv, tripsCsv] = await Promise.all([
+  const [agencyCsv, routesCsv, stopsCsv, tripsCsv] = await Promise.all([
+    zip.file("agency.txt")?.async("string") ?? Promise.resolve(""),
     zip.file("routes.txt")?.async("string") ?? Promise.resolve(""),
     zip.file("stops.txt")?.async("string") ?? Promise.resolve(""),
     zip.file("trips.txt")?.async("string") ?? Promise.resolve(""),
   ]);
 
   return {
+    agencies: parseAgencies(agencyCsv),
     routes: parseRoutes(routesCsv),
     stops: parseStops(stopsCsv),
     trips: parseTrips(tripsCsv),
     loadedAt: Date.now(),
+    sourceUrl: usedUrl,
   };
 }
 
@@ -125,6 +166,17 @@ function splitCsvLine(line: string): string[] {
   return out;
 }
 
+function parseAgencies(csv: string): Record<string, AgencyInfo> {
+  const out: Record<string, AgencyInfo> = {};
+  for (const row of parseCsv(csv)) {
+    const id = row["agency_id"];
+    const name = row["agency_name"];
+    if (!id || !name) continue;
+    out[id] = { agencyId: id, name };
+  }
+  return out;
+}
+
 function parseRoutes(csv: string): Record<string, RouteInfo> {
   const out: Record<string, RouteInfo> = {};
   for (const row of parseCsv(csv)) {
@@ -132,6 +184,7 @@ function parseRoutes(csv: string): Record<string, RouteInfo> {
     if (!id) continue;
     out[id] = {
       routeId: id,
+      agencyId: row["agency_id"] || undefined,
       shortName: row["route_short_name"] || undefined,
       longName: row["route_long_name"] || undefined,
       color: row["route_color"] || undefined,

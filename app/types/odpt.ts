@@ -40,6 +40,11 @@ export interface OdptBusroutePattern {
   "odpt:busroute"?: string;
   "odpt:direction"?: string;
   "odpt:pattern"?: OdptBusroutePatternStop[];
+  agencyId?: string;
+}
+
+export interface AgencyEntry {
+  name: string;
 }
 
 export interface OdptBusstopPole {

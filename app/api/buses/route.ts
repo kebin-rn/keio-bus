@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { buildTripInfo, fetchKeioBusFeeds } from "@/app/lib/gtfsrt";
 import { getStaticGtfs } from "@/app/lib/staticGtfs";
-import type { OdptBus, OdptBusroutePattern } from "@/app/types/odpt";
+import type {
+  AgencyEntry,
+  OdptBus,
+  OdptBusroutePattern,
+} from "@/app/types/odpt";
 
 type StopEntry = { title: string; lat?: number; lng?: number };
 
@@ -78,6 +82,7 @@ export async function GET() {
 
     const patternMap: Record<string, OdptBusroutePattern> = {};
     const stopMap: Record<string, StopEntry> = {};
+    const agencyMap: Record<string, AgencyEntry> = {};
 
     if (stat) {
       usedRouteIds.forEach((rid) => {
@@ -94,7 +99,11 @@ export async function GET() {
           "owl:sameAs": rid,
           "odpt:operator": "odpt.Operator:KeioBus",
           "dc:title": title,
+          agencyId: r.agencyId,
         };
+        if (r.agencyId && stat.agencies[r.agencyId]) {
+          agencyMap[r.agencyId] = { name: stat.agencies[r.agencyId].name };
+        }
       });
       usedStopIds.forEach((sid) => {
         const s = stat.stops[sid];
@@ -107,6 +116,7 @@ export async function GET() {
       buses,
       patternMap,
       stopMap,
+      agencyMap,
       fetchedAt: new Date().toISOString(),
       vehicleCount: vehicles.entity.length,
       tripUpdateCount: tripUpdates?.entity.length ?? 0,

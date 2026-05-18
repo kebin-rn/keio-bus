@@ -1,25 +1,37 @@
 "use client";
 
 import { useMemo } from "react";
-import type { OdptBus, OdptBusroutePattern } from "@/app/types/odpt";
+import type {
+  AgencyEntry,
+  OdptBus,
+  OdptBusroutePattern,
+} from "@/app/types/odpt";
 import { classifyDelay, shortenPatternId, shortenStopId } from "@/app/lib/format";
 
 interface Props {
   buses: OdptBus[];
+  allBuses: OdptBus[];
   patternMap: Record<string, OdptBusroutePattern>;
   stopMap: Record<string, { title: string; lat?: number; lng?: number }>;
+  agencyMap: Record<string, AgencyEntry>;
   selectedBusId: string | null;
   onSelectBus: (id: string | null) => void;
+  agencyFilter: string;
+  onChangeAgencyFilter: (v: string) => void;
   routeFilter: string;
   onChangeRouteFilter: (v: string) => void;
 }
 
 export default function BusInfoPanel({
   buses,
+  allBuses,
   patternMap,
   stopMap,
+  agencyMap,
   selectedBusId,
   onSelectBus,
+  agencyFilter,
+  onChangeAgencyFilter,
   routeFilter,
   onChangeRouteFilter,
 }: Props) {
@@ -39,6 +51,22 @@ export default function BusInfoPanel({
     }
     return { total: buses.length, onTime, minor, major, early, unknown };
   }, [buses]);
+
+  const agencyOptions = useMemo(() => {
+    const counts: Record<string, { name: string; count: number }> = {};
+    for (const b of allBuses) {
+      const pid = b["odpt:busroutePattern"];
+      const aid = pid ? patternMap[pid]?.agencyId : undefined;
+      if (!aid) continue;
+      const name = agencyMap[aid]?.name || aid;
+      counts[aid] = counts[aid]
+        ? { name, count: counts[aid].count + 1 }
+        : { name, count: 1 };
+    }
+    return Object.entries(counts)
+      .map(([id, v]) => ({ id, ...v }))
+      .sort((a, b) => a.name.localeCompare(b.name, "ja"));
+  }, [allBuses, patternMap, agencyMap]);
 
   const routeOptions = useMemo(() => {
     const counts: Record<string, { title: string; count: number }> = {};
@@ -101,6 +129,40 @@ export default function BusInfoPanel({
           <StatBadge label="早発" count={stats.early} color="#0ea5e9" />
         </div>
       </div>
+
+      {agencyOptions.length > 0 && (
+        <div style={{ padding: "12px 18px", borderBottom: "1px solid #1e293b" }}>
+          <label
+            style={{
+              display: "block",
+              fontSize: 11,
+              color: "#94a3b8",
+              marginBottom: 6,
+            }}
+          >
+            営業所で絞り込み
+          </label>
+          <select
+            value={agencyFilter}
+            onChange={(e) => onChangeAgencyFilter(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "8px 10px",
+              background: "#1e293b",
+              color: "#f1f5f9",
+              border: "1px solid #334155",
+              borderRadius: 6,
+            }}
+          >
+            <option value="">すべての営業所 ({allBuses.length}台)</option>
+            {agencyOptions.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name} ({a.count}台)
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div style={{ padding: "12px 18px", borderBottom: "1px solid #1e293b" }}>
         <label

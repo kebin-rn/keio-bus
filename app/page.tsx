@@ -4,7 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { APIProvider } from "@vis.gl/react-google-maps";
 import BusMap from "./components/BusMap";
 import BusInfoPanel from "./components/BusInfoPanel";
-import type { OdptBus, OdptBusroutePattern } from "./types/odpt";
+import type {
+  AgencyEntry,
+  OdptBus,
+  OdptBusroutePattern,
+} from "./types/odpt";
 
 const REFRESH_INTERVAL_MS = 30_000;
 
@@ -17,7 +21,9 @@ export default function Page() {
   const [buses, setBuses] = useState<OdptBus[]>([]);
   const [patternMap, setPatternMap] = useState<Record<string, OdptBusroutePattern>>({});
   const [stopMap, setStopMap] = useState<StopMap>({});
+  const [agencyMap, setAgencyMap] = useState<Record<string, AgencyEntry>>({});
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
+  const [agencyFilter, setAgencyFilter] = useState("");
   const [routeFilter, setRouteFilter] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [loading, setLoading] = useState(true);
@@ -32,6 +38,7 @@ export default function Page() {
       setBuses(data.buses || []);
       if (data.patternMap) setPatternMap(data.patternMap);
       if (data.stopMap) setStopMap(data.stopMap);
+      if (data.agencyMap) setAgencyMap(data.agencyMap);
       setLastUpdated(new Date());
       setError(null);
     } catch (e) {
@@ -50,9 +57,16 @@ export default function Page() {
     return () => clearInterval(id);
   }, [fetchBuses]);
 
-  const displayedBuses = routeFilter
-    ? buses.filter((b) => b["odpt:busroutePattern"] === routeFilter)
+  const agencyBuses = agencyFilter
+    ? buses.filter((b) => {
+        const pid = b["odpt:busroutePattern"];
+        return pid ? patternMap[pid]?.agencyId === agencyFilter : false;
+      })
     : buses;
+
+  const displayedBuses = routeFilter
+    ? agencyBuses.filter((b) => b["odpt:busroutePattern"] === routeFilter)
+    : agencyBuses;
 
   return (
     <div
@@ -94,11 +108,19 @@ export default function Page() {
             {loading && <LoadingOverlay />}
           </div>
           <BusInfoPanel
-            buses={buses}
+            buses={agencyBuses}
+            allBuses={buses}
             patternMap={patternMap}
             stopMap={stopMap}
+            agencyMap={agencyMap}
             selectedBusId={selectedBusId}
             onSelectBus={setSelectedBusId}
+            agencyFilter={agencyFilter}
+            onChangeAgencyFilter={(v) => {
+              setAgencyFilter(v);
+              setRouteFilter("");
+              setSelectedBusId(null);
+            }}
             routeFilter={routeFilter}
             onChangeRouteFilter={(v) => {
               setRouteFilter(v);
