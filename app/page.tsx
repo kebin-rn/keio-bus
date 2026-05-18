@@ -15,8 +15,8 @@ export default function Page() {
   const mapId = process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID || "DEMO_MAP_ID";
 
   const [buses, setBuses] = useState<OdptBus[]>([]);
-  const [patternMap] = useState<Record<string, OdptBusroutePattern>>({});
-  const [stopMap] = useState<StopMap>({});
+  const [patternMap, setPatternMap] = useState<Record<string, OdptBusroutePattern>>({});
+  const [stopMap, setStopMap] = useState<StopMap>({});
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [routeFilter, setRouteFilter] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -30,6 +30,8 @@ export default function Page() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       setBuses(data.buses || []);
+      if (data.patternMap) setPatternMap(data.patternMap);
+      if (data.stopMap) setStopMap(data.stopMap);
       setLastUpdated(new Date());
       setError(null);
     } catch (e) {

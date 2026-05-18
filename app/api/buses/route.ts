@@ -1,15 +1,29 @@
 import { NextResponse } from "next/server";
-import { buildDelayByTrip, fetchKeioBusFeeds } from "@/app/lib/gtfsrt";
-import type { OdptBus } from "@/app/types/odpt";
+import { buildTripInfo, fetchKeioBusFeeds } from "@/app/lib/gtfsrt";
+import { getStaticGtfs } from "@/app/lib/staticGtfs";
+import type { OdptBus, OdptBusroutePattern } from "@/app/types/odpt";
+
+type StopEntry = { title: string; lat?: number; lng?: number };
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const { vehicles, tripUpdates } = await fetchKeioBusFeeds();
-    const delayByTrip = buildDelayByTrip(tripUpdates);
+    const [{ vehicles, tripUpdates }, staticResult] = await Promise.all([
+      fetchKeioBusFeeds(),
+      getStaticGtfs().catch((e) => {
+        console.warn("static GTFS unavailable:", e);
+        return null;
+      }),
+    ]);
+
+    const tripInfo = buildTripInfo(tripUpdates);
+    const stat = staticResult;
 
     const buses: OdptBus[] = [];
+    const usedRouteIds = new Set<string>();
+    const usedStopIds = new Set<string>();
+
     for (const ent of vehicles.entity) {
       const v = ent.vehicle;
       const pos = v?.position;
@@ -18,15 +32,24 @@ export async function GET() {
       if (pos.longitude === undefined || pos.longitude === null) continue;
 
       const tripId = v.trip?.tripId ?? undefined;
-      const routeId = v.trip?.routeId ?? undefined;
+      const rtTrip = tripId !== undefined ? tripInfo[tripId] : undefined;
+      const staticTrip =
+        stat && tripId !== undefined ? stat.trips[tripId] : undefined;
+
+      const routeId =
+        v.trip?.routeId || rtTrip?.routeId || staticTrip?.routeId || undefined;
+      const nextStopId =
+        v.stopId || rtTrip?.nextStopId || undefined;
+
+      if (routeId) usedRouteIds.add(routeId);
+      if (nextStopId) usedStopIds.add(nextStopId);
+
       const id = v.vehicle?.id || ent.id || `${pos.latitude},${pos.longitude}`;
       const tsRaw = v.timestamp;
       const tsNum =
         tsRaw && typeof tsRaw === "object" && "toNumber" in tsRaw
           ? (tsRaw as { toNumber: () => number }).toNumber()
           : Number(tsRaw ?? 0);
-
-      const delay = tripId !== undefined ? delayByTrip[tripId] : undefined;
 
       buses.push({
         "@id": id,
@@ -36,7 +59,7 @@ export async function GET() {
           : new Date().toISOString(),
         "odpt:operator": "odpt.Operator:KeioBus",
         "odpt:busroutePattern": routeId,
-        "odpt:toBusstopPole": v.stopId ?? undefined,
+        "odpt:toBusstopPole": nextStopId,
         "geo:lat": pos.latitude,
         "geo:long": pos.longitude,
         "odpt:azimuth":
@@ -47,16 +70,46 @@ export async function GET() {
           pos.speed !== null && pos.speed !== undefined
             ? Math.round(pos.speed * 3.6)
             : undefined,
-        "odpt:delay": delay,
+        "odpt:delay": rtTrip?.delay,
         "odpt:vehicleNumber": v.vehicle?.label || v.vehicle?.id || undefined,
+      });
+    }
+
+    const patternMap: Record<string, OdptBusroutePattern> = {};
+    const stopMap: Record<string, StopEntry> = {};
+
+    if (stat) {
+      usedRouteIds.forEach((rid) => {
+        const r = stat.routes[rid];
+        if (!r) return;
+        const title = r.shortName
+          ? r.longName
+            ? `${r.shortName} ${r.longName}`
+            : r.shortName
+          : r.longName || rid;
+        patternMap[rid] = {
+          "@id": rid,
+          "@type": "odpt:BusroutePattern",
+          "owl:sameAs": rid,
+          "odpt:operator": "odpt.Operator:KeioBus",
+          "dc:title": title,
+        };
+      });
+      usedStopIds.forEach((sid) => {
+        const s = stat.stops[sid];
+        if (!s) return;
+        stopMap[sid] = { title: s.name, lat: s.lat, lng: s.lng };
       });
     }
 
     return NextResponse.json({
       buses,
+      patternMap,
+      stopMap,
       fetchedAt: new Date().toISOString(),
       vehicleCount: vehicles.entity.length,
       tripUpdateCount: tripUpdates?.entity.length ?? 0,
+      staticAvailable: stat !== null,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";

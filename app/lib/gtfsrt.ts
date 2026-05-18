@@ -34,31 +34,52 @@ export async function fetchKeioBusFeeds(): Promise<{
   return { vehicles, tripUpdates };
 }
 
-export function buildDelayByTrip(
+export interface TripInfo {
+  delay?: number;
+  routeId?: string;
+  headsign?: string;
+  nextStopId?: string;
+}
+
+export function buildTripInfo(
   feed: FeedMessage | null,
-): Record<string, number> {
-  const map: Record<string, number> = {};
+): Record<string, TripInfo> {
+  const map: Record<string, TripInfo> = {};
   if (!feed) return map;
   for (const ent of feed.entity) {
     const tu = ent.tripUpdate;
     if (!tu?.trip?.tripId) continue;
 
+    const info: TripInfo = {};
+
+    if (tu.trip.routeId) info.routeId = tu.trip.routeId;
+
     let delay: number | null | undefined = tu.delay;
-    if (delay === undefined || delay === null) {
-      for (const stu of tu.stopTimeUpdate ?? []) {
+    let nextStopId: string | undefined;
+    for (const stu of tu.stopTimeUpdate ?? []) {
+      if (
+        nextStopId === undefined &&
+        stu.stopId !== undefined &&
+        stu.stopId !== null
+      ) {
+        nextStopId = stu.stopId;
+      }
+      if (delay === undefined || delay === null) {
         if (stu.arrival?.delay !== undefined && stu.arrival.delay !== null) {
           delay = stu.arrival.delay;
-          break;
-        }
-        if (stu.departure?.delay !== undefined && stu.departure.delay !== null) {
+        } else if (
+          stu.departure?.delay !== undefined &&
+          stu.departure.delay !== null
+        ) {
           delay = stu.departure.delay;
-          break;
         }
       }
+      if (delay !== undefined && delay !== null && nextStopId !== undefined) break;
     }
-    if (delay !== undefined && delay !== null) {
-      map[tu.trip.tripId] = delay;
-    }
+    if (delay !== undefined && delay !== null) info.delay = delay;
+    if (nextStopId !== undefined) info.nextStopId = nextStopId;
+
+    map[tu.trip.tripId] = info;
   }
   return map;
 }
