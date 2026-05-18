@@ -1,61 +1,30 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import Link from "next/link";
 import { APIProvider } from "@vis.gl/react-google-maps";
 import BusMap from "./components/BusMap";
 import BusInfoPanel from "./components/BusInfoPanel";
-import type {
-  OdptBus,
-  OdptBusroutePattern,
-  OfficeEntry,
-} from "./types/odpt";
-
-const REFRESH_INTERVAL_MS = 30_000;
-
-type StopMap = Record<string, { title: string; lat?: number; lng?: number }>;
+import { useBusData } from "./hooks/useBusData";
 
 export default function Page() {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "";
   const mapId = process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID || "DEMO_MAP_ID";
 
-  const [buses, setBuses] = useState<OdptBus[]>([]);
-  const [patternMap, setPatternMap] = useState<Record<string, OdptBusroutePattern>>({});
-  const [stopMap, setStopMap] = useState<StopMap>({});
-  const [officeMap, setOfficeMap] = useState<Record<string, OfficeEntry>>({});
+  const {
+    buses,
+    patternMap,
+    stopMap,
+    officeMap,
+    lastUpdated,
+    loading,
+    error,
+    refresh: fetchBuses,
+  } = useBusData();
+
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [officeFilter, setOfficeFilter] = useState("");
   const [routeFilter, setRouteFilter] = useState("");
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const initial = useRef(true);
-
-  const fetchBuses = useCallback(async () => {
-    try {
-      const res = await fetch("/api/buses", { cache: "no-store" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setBuses(data.buses || []);
-      if (data.patternMap) setPatternMap(data.patternMap);
-      if (data.stopMap) setStopMap(data.stopMap);
-      if (data.officeMap) setOfficeMap(data.officeMap);
-      setLastUpdated(new Date());
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "取得に失敗しました");
-    } finally {
-      if (initial.current) {
-        setLoading(false);
-        initial.current = false;
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchBuses();
-    const id = setInterval(fetchBuses, REFRESH_INTERVAL_MS);
-    return () => clearInterval(id);
-  }, [fetchBuses]);
 
   const officeBuses = officeFilter
     ? buses.filter((b) => b.officeId === officeFilter)
@@ -199,6 +168,20 @@ function Header({
         >
           更新
         </button>
+        <Link
+          href="/mobile"
+          style={{
+            padding: "6px 12px",
+            background: "#1e293b",
+            border: "1px solid #334155",
+            borderRadius: 6,
+            fontSize: 12,
+            color: "#cbd5e1",
+            textDecoration: "none",
+          }}
+        >
+          スマホ版
+        </Link>
       </div>
     </header>
   );

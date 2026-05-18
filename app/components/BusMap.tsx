@@ -17,6 +17,7 @@ interface Props {
   selectedBusId: string | null;
   onSelectBus: (id: string | null) => void;
   mapId: string;
+  hideInfoWindow?: boolean;
 }
 
 const KEIO_CENTER = { lat: 35.6638, lng: 139.5286 };
@@ -28,6 +29,7 @@ export default function BusMap({
   selectedBusId,
   onSelectBus,
   mapId,
+  hideInfoWindow,
 }: Props) {
   const selected = useMemo(
     () => buses.find((b) => b["@id"] === selectedBusId) || null,
@@ -89,15 +91,18 @@ export default function BusMap({
         );
       })}
 
-      {selected && selected["geo:lat"] !== undefined && selected["geo:long"] !== undefined && (
-        <InfoWindow
-          position={{ lat: selected["geo:lat"], lng: selected["geo:long"] }}
-          pixelOffset={[0, -16]}
-          onCloseClick={() => onSelectBus(null)}
-        >
-          <BusInfo bus={selected} patternMap={patternMap} stopMap={stopMap} />
-        </InfoWindow>
-      )}
+      {!hideInfoWindow &&
+        selected &&
+        selected["geo:lat"] !== undefined &&
+        selected["geo:long"] !== undefined && (
+          <InfoWindow
+            position={{ lat: selected["geo:lat"], lng: selected["geo:long"] }}
+            pixelOffset={[0, -16]}
+            onCloseClick={() => onSelectBus(null)}
+          >
+            <BusInfo bus={selected} patternMap={patternMap} stopMap={stopMap} />
+          </InfoWindow>
+        )}
     </Map>
   );
 }

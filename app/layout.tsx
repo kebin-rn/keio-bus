@@ -1,10 +1,17 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "京王バス運行情報マップ",
   description:
     "公共交通オープンデータセンター (ODPT) のデータを利用した京王バスのリアルタイム運行情報",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  themeColor: "#020617",
 };
 
 export default function RootLayout({
