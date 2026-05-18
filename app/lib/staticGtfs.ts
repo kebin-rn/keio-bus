@@ -1,13 +1,10 @@
 import JSZip from "jszip";
 
-const CANDIDATE_URLS = [
-  "https://api.odpt.org/api/v4/files/odpt_KeioBus_AllLines_gtfs.zip",
-  "https://api.odpt.org/api/v4/files/odpt_KeioBus_AllLines.zip",
-  "https://api.odpt.org/api/v4/files/keio_bus_all_lines.zip",
-  "https://api.odpt.org/api/v4/gtfs/static/odpt_KeioBus_AllLines.zip",
-  "https://api.odpt.org/api/v4/gtfs/odpt_KeioBus_AllLines.zip",
-  "https://api.odpt.org/api/v4/gtfs/odpt_KeioBus_AllLines",
-];
+const STATIC_GTFS_URL = "https://api.odpt.org/api/v4/files/odpt/KeioBus/AllLines.zip";
+
+// 有効な版の開始日。ODPT のデータセットは版ごとに開始日が付与されており、
+// 現在 (2026-05) は 20260401 版が有効。版が更新されたらここを書き換える。
+const GTFS_VERSION_DATE = process.env.KEIO_BUS_GTFS_DATE || "20260401";
 
 const TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -50,16 +47,19 @@ export interface StaticGtfs {
 
 let cache: StaticGtfs | null = null;
 let inflight: Promise<StaticGtfs> | null = null;
+let lastError: string | null = null;
 
-export async function getStaticGtfs(): Promise<StaticGtfs> {
-  const now = Date.now();
-  if (cache && now - cache.loadedAt < TTL_MS) return cache;
+function startLoad(): Promise<StaticGtfs> {
   if (inflight) return inflight;
-
   inflight = loadStaticGtfs()
     .then((data) => {
       cache = data;
+      lastError = null;
       return data;
+    })
+    .catch((e) => {
+      lastError = e instanceof Error ? e.message : String(e);
+      throw e;
     })
     .finally(() => {
       inflight = null;
@@ -67,41 +67,55 @@ export async function getStaticGtfs(): Promise<StaticGtfs> {
   return inflight;
 }
 
+export function getStaticGtfsSync(): {
+  data: StaticGtfs | null;
+  loading: boolean;
+  error: string | null;
+} {
+  const now = Date.now();
+  if (cache && now - cache.loadedAt < TTL_MS) {
+    return { data: cache, loading: false, error: null };
+  }
+  startLoad().catch(() => {});
+  return { data: cache, loading: inflight !== null, error: lastError };
+}
+
+export async function getStaticGtfs(): Promise<StaticGtfs> {
+  const now = Date.now();
+  if (cache && now - cache.loadedAt < TTL_MS) return cache;
+  return startLoad();
+}
+
 async function loadStaticGtfs(): Promise<StaticGtfs> {
   const key = process.env.ODPT_CONSUMER_KEY;
   if (!key) throw new Error("ODPT_CONSUMER_KEY is not set");
 
-  const errors: string[] = [];
-  let buf: ArrayBuffer | null = null;
-  let usedUrl = "";
+  const url = new URL(STATIC_GTFS_URL);
+  url.searchParams.set("date", GTFS_VERSION_DATE);
+  url.searchParams.set("acl:consumerKey", key);
 
-  for (const url of CANDIDATE_URLS) {
-    const full = `${url}?acl:consumerKey=${encodeURIComponent(key)}`;
-    try {
-      const res = await fetch(full, { cache: "no-store" });
-      if (!res.ok) {
-        errors.push(`${url} → ${res.status}`);
-        continue;
-      }
-      const contentType = res.headers.get("content-type") || "";
-      const candidate = await res.arrayBuffer();
-      const head = new Uint8Array(candidate.slice(0, 4));
-      const isZip = head[0] === 0x50 && head[1] === 0x4b;
-      if (!isZip) {
-        errors.push(`${url} → not a zip (${contentType})`);
-        continue;
-      }
-      buf = candidate;
-      usedUrl = url;
-      break;
-    } catch (e) {
-      errors.push(`${url} → ${e instanceof Error ? e.message : String(e)}`);
-    }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), {
+      cache: "no-store",
+      signal: controller.signal,
+      redirect: "follow",
+    });
+  } finally {
+    clearTimeout(timer);
   }
 
-  if (!buf) {
-    throw new Error(`no static GTFS URL worked: ${errors.join("; ")}`);
+  if (!res.ok) {
+    throw new Error(`static GTFS ${res.status}`);
   }
+  const buf = await res.arrayBuffer();
+  const head = new Uint8Array(buf.slice(0, 4));
+  if (head[0] !== 0x50 || head[1] !== 0x4b) {
+    throw new Error("static GTFS response is not a zip");
+  }
+  const usedUrl = STATIC_GTFS_URL;
 
   const zip = await JSZip.loadAsync(buf);
 

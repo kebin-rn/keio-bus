@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildTripInfo, fetchKeioBusFeeds } from "@/app/lib/gtfsrt";
-import { getStaticGtfs } from "@/app/lib/staticGtfs";
+import { getStaticGtfsSync } from "@/app/lib/staticGtfs";
 import type {
   AgencyEntry,
   OdptBus,
@@ -13,17 +13,13 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    let staticError: string | null = null;
-    const [{ vehicles, tripUpdates }, staticResult] = await Promise.all([
-      fetchKeioBusFeeds(),
-      getStaticGtfs().catch((e) => {
-        staticError = e instanceof Error ? e.message : String(e);
-        return null;
-      }),
-    ]);
+    const { vehicles, tripUpdates } = await fetchKeioBusFeeds();
+    const staticSnapshot = getStaticGtfsSync();
+    const stat = staticSnapshot.data;
+    const staticError = staticSnapshot.error;
+    const staticLoading = staticSnapshot.loading;
 
     const tripInfo = buildTripInfo(tripUpdates);
-    const stat = staticResult;
 
     const buses: OdptBus[] = [];
     const usedRouteIds = new Set<string>();
@@ -121,6 +117,7 @@ export async function GET() {
       vehicleCount: vehicles.entity.length,
       tripUpdateCount: tripUpdates?.entity.length ?? 0,
       staticAvailable: stat !== null,
+      staticLoading,
       staticError,
     });
   } catch (e) {
