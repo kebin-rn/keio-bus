@@ -15,8 +15,8 @@ export default function Page() {
   const mapId = process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID || "DEMO_MAP_ID";
 
   const [buses, setBuses] = useState<OdptBus[]>([]);
-  const [patternMap, setPatternMap] = useState<Record<string, OdptBusroutePattern>>({});
-  const [stopMap, setStopMap] = useState<StopMap>({});
+  const [patternMap] = useState<Record<string, OdptBusroutePattern>>({});
+  const [stopMap] = useState<StopMap>({});
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [routeFilter, setRouteFilter] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -42,39 +42,11 @@ export default function Page() {
     }
   }, []);
 
-  const fetchPatterns = useCallback(async () => {
-    try {
-      const res = await fetch("/api/busroutes");
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      const map: Record<string, OdptBusroutePattern> = {};
-      for (const p of (data.patterns || []) as OdptBusroutePattern[]) {
-        map[p["owl:sameAs"] || p["@id"]] = p;
-      }
-      setPatternMap(map);
-    } catch {
-      // 系統情報は無くても地図は表示できるので silently fail
-    }
-  }, []);
-
-  const fetchStops = useCallback(async () => {
-    try {
-      const res = await fetch("/api/busstops");
-      const data = await res.json();
-      if (!res.ok) return;
-      setStopMap(data.stops || {});
-    } catch {
-      // optional
-    }
-  }, []);
-
   useEffect(() => {
-    fetchPatterns();
-    fetchStops();
     fetchBuses();
     const id = setInterval(fetchBuses, REFRESH_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [fetchBuses, fetchPatterns, fetchStops]);
+  }, [fetchBuses]);
 
   const displayedBuses = routeFilter
     ? buses.filter((b) => b["odpt:busroutePattern"] === routeFilter)
