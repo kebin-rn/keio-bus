@@ -10,8 +10,9 @@ import type {
 type StopEntry = { title: string; lat?: number; lng?: number };
 
 export const dynamic = "force-dynamic";
-// 初回(コールド)リクエストでは静的GTFS(約6MB)のダウンロード+展開が走るため余裕を持たせる
-export const maxDuration = 30;
+// 初回(コールド)リクエストでは有効な版日付の探索 + 静的GTFS(約6MB)の
+// ダウンロード/展開が走るため余裕を持たせる
+export const maxDuration = 60;
 
 export async function GET() {
   try {

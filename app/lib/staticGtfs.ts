@@ -4,48 +4,75 @@ const STATIC_GTFS_URL = "https://api.odpt.org/api/v4/files/odpt/KeioBus/AllLines
 
 const TTL_MS = 24 * 60 * 60 * 1000;
 
-// ODPT の GTFS ファイルは版ごとに ?date=YYYYMMDD が付与され、版が更新されると
-// 古い date は 404 になる。固定値だと配信切替で壊れるため、候補を順に試して
-// 最初に zip が取れたものを採用する。
-//  1. KEIO_BUS_GTFS_DATE が指定されていればそれを最優先
-//  2. date 指定なし (最新版が返ることを期待)
-//  3. 直近 8 ヶ月の月初
-//  4. 既知の版 20260401 を保険として最後に
-function candidateDates(): (string | null)[] {
-  const out: (string | null)[] = [];
-  const seen = new Set<string>();
-  const push = (d: string | null) => {
-    const k = d ?? "__none__";
-    if (seen.has(k)) return;
-    seen.add(k);
-    out.push(d);
-  };
+// ODPT の GTFS ファイルは版ごとに ?date=YYYYMMDD が付与される。版が更新されると
+// 古い date は 404 になり、しかも版日付は月初などの規則的な値ではなく不定
+// (例: 20260404)。date 省略も 404。よって有効な版日付を実行時に「探索」する:
+// 直近 N 日を新しい順に Range で軽く叩き、最初に zip が返った日付を採用する。
+const SCAN_DAYS = 180;
+const SCAN_BATCH = 24;
 
-  if (process.env.KEIO_BUS_GTFS_DATE) push(process.env.KEIO_BUS_GTFS_DATE);
-  push(null);
+function recentDates(days: number): string[] {
+  const out: string[] = [];
   const now = new Date();
-  for (let i = 0; i < 8; i += 1) {
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+  for (let i = 0; i < days; i += 1) {
+    const d = new Date(now.getTime() - i * 86400000);
     const y = d.getUTCFullYear();
     const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-    push(`${y}${m}01`);
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    out.push(`${y}${m}${day}`);
   }
-  push("20260401");
   return out;
 }
 
 // 一度成功した date を覚えておき、次回ロード時に最優先で試す
-let knownGoodDate: string | null | undefined = undefined;
+let knownGoodDate: string | undefined = undefined;
 
-async function fetchZip(date: string | null, key: string): Promise<ArrayBuffer | null> {
+function gtfsUrl(date: string, key: string): string {
   const url = new URL(STATIC_GTFS_URL);
-  if (date) url.searchParams.set("date", date);
+  url.searchParams.set("date", date);
   url.searchParams.set("acl:consumerKey", key);
+  return url.toString();
+}
 
+// 先頭数バイトだけ取得して「その日付の版が存在し zip か」を安価に判定
+async function hasZip(date: string, key: string): Promise<boolean> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
+  const timer = setTimeout(() => controller.abort(), 8000);
   try {
-    const res = await fetch(url.toString(), {
+    const res = await fetch(gtfsUrl(date, key), {
+      cache: "no-store",
+      signal: controller.signal,
+      redirect: "follow",
+      headers: { Range: "bytes=0-3" },
+    });
+    if (!(res.ok || res.status === 206)) return false;
+    const buf = await res.arrayBuffer();
+    const head = new Uint8Array(buf.slice(0, 2));
+    return head[0] === 0x50 && head[1] === 0x4b;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 直近 SCAN_DAYS 日を新しい順にバッチ探索し、最初にヒットしたバッチ内の最新日付を返す
+async function discoverDate(key: string): Promise<string | undefined> {
+  const dates = recentDates(SCAN_DAYS);
+  for (let i = 0; i < dates.length; i += SCAN_BATCH) {
+    const batch = dates.slice(i, i + SCAN_BATCH); // 既に新しい順
+    const flags = await Promise.all(batch.map((d) => hasZip(d, key)));
+    const hitIdx = flags.findIndex(Boolean);
+    if (hitIdx !== -1) return batch[hitIdx];
+  }
+  return undefined;
+}
+
+async function downloadZip(date: string, key: string): Promise<ArrayBuffer | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+  try {
+    const res = await fetch(gtfsUrl(date, key), {
       cache: "no-store",
       signal: controller.signal,
       redirect: "follow",
@@ -138,30 +165,34 @@ export async function getStaticGtfs(): Promise<StaticGtfs | null> {
   }
 }
 
+async function resolveZip(
+  key: string,
+): Promise<{ buf: ArrayBuffer; date: string }> {
+  // 1) 手動ピン (KEIO_BUS_GTFS_DATE) → 2) 既知の正解 → 両者ダメなら探索
+  const preferred = process.env.KEIO_BUS_GTFS_DATE || knownGoodDate;
+  if (preferred) {
+    const buf = await downloadZip(preferred, key);
+    if (buf) return { buf, date: preferred };
+  }
+
+  const discovered = await discoverDate(key);
+  if (!discovered) {
+    throw new Error(
+      `no working static GTFS version found in last ${SCAN_DAYS} days`,
+    );
+  }
+  const buf = await downloadZip(discovered, key);
+  if (!buf) {
+    throw new Error(`discovered date ${discovered} but download failed`);
+  }
+  return { buf, date: discovered };
+}
+
 async function loadStaticGtfs(): Promise<StaticGtfs> {
   const key = process.env.ODPT_CONSUMER_KEY;
   if (!key) throw new Error("ODPT_CONSUMER_KEY is not set");
 
-  const candidates =
-    knownGoodDate !== undefined
-      ? [knownGoodDate, ...candidateDates().filter((d) => d !== knownGoodDate)]
-      : candidateDates();
-
-  let buf: ArrayBuffer | null = null;
-  let usedDate: string | null = null;
-  const tried: string[] = [];
-  for (const date of candidates) {
-    tried.push(date ?? "(no date)");
-    buf = await fetchZip(date, key);
-    if (buf) {
-      usedDate = date;
-      break;
-    }
-  }
-
-  if (!buf) {
-    throw new Error(`no working static GTFS version (tried: ${tried.join(", ")})`);
-  }
+  const { buf, date: usedDate } = await resolveZip(key);
   knownGoodDate = usedDate;
 
   const zip = await JSZip.loadAsync(buf);
@@ -179,7 +210,7 @@ async function loadStaticGtfs(): Promise<StaticGtfs> {
     stops: parseStops(stopsCsv),
     trips: parseTrips(tripsCsv),
     loadedAt: Date.now(),
-    sourceUrl: usedDate ? `${STATIC_GTFS_URL}?date=${usedDate}` : STATIC_GTFS_URL,
+    sourceUrl: `${STATIC_GTFS_URL}?date=${usedDate}`,
   };
 }
 
