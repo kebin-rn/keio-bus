@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildTripInfo, fetchKeioBusFeeds } from "@/app/lib/gtfsrt";
-import { getStaticGtfsSync } from "@/app/lib/staticGtfs";
+import { getCachedStaticGtfs, getStaticGtfs } from "@/app/lib/staticGtfs";
 import type {
   OdptBus,
   OdptBusroutePattern,
@@ -10,14 +10,14 @@ import type {
 type StopEntry = { title: string; lat?: number; lng?: number };
 
 export const dynamic = "force-dynamic";
+// 初回(コールド)リクエストでは静的GTFS(約6MB)のダウンロード+展開が走るため余裕を持たせる
+export const maxDuration = 30;
 
 export async function GET() {
   try {
     const { vehicles, tripUpdates } = await fetchKeioBusFeeds();
-    const staticSnapshot = getStaticGtfsSync();
-    const stat = staticSnapshot.data;
-    const staticError = staticSnapshot.error;
-    const staticLoading = staticSnapshot.loading;
+    const stat = await getStaticGtfs();
+    const { error: staticError } = getCachedStaticGtfs();
 
     const tripInfo = buildTripInfo(tripUpdates);
 
@@ -123,7 +123,7 @@ export async function GET() {
       vehicleCount: vehicles.entity.length,
       tripUpdateCount: tripUpdates?.entity.length ?? 0,
       staticAvailable: stat !== null,
-      staticLoading,
+      staticSource: stat?.sourceUrl ?? null,
       staticError,
     });
   } catch (e) {

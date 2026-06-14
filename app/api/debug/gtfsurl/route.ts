@@ -19,7 +19,7 @@ function candidateDates(): string[] {
   const m = String(now.getUTCMonth() + 1).padStart(2, "0");
   const day = String(now.getUTCDate()).padStart(2, "0");
   out.add(`${y}${m}${day}`);
-  return [...out];
+  return Array.from(out);
 }
 
 async function probe(label: string, url: string) {

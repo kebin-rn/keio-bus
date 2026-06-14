@@ -2,11 +2,65 @@ import JSZip from "jszip";
 
 const STATIC_GTFS_URL = "https://api.odpt.org/api/v4/files/odpt/KeioBus/AllLines.zip";
 
-// 有効な版の開始日。ODPT のデータセットは版ごとに開始日が付与されており、
-// 現在 (2026-05) は 20260401 版が有効。版が更新されたらここを書き換える。
-const GTFS_VERSION_DATE = process.env.KEIO_BUS_GTFS_DATE || "20260401";
-
 const TTL_MS = 24 * 60 * 60 * 1000;
+
+// ODPT の GTFS ファイルは版ごとに ?date=YYYYMMDD が付与され、版が更新されると
+// 古い date は 404 になる。固定値だと配信切替で壊れるため、候補を順に試して
+// 最初に zip が取れたものを採用する。
+//  1. KEIO_BUS_GTFS_DATE が指定されていればそれを最優先
+//  2. date 指定なし (最新版が返ることを期待)
+//  3. 直近 8 ヶ月の月初
+//  4. 既知の版 20260401 を保険として最後に
+function candidateDates(): (string | null)[] {
+  const out: (string | null)[] = [];
+  const seen = new Set<string>();
+  const push = (d: string | null) => {
+    const k = d ?? "__none__";
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push(d);
+  };
+
+  if (process.env.KEIO_BUS_GTFS_DATE) push(process.env.KEIO_BUS_GTFS_DATE);
+  push(null);
+  const now = new Date();
+  for (let i = 0; i < 8; i += 1) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    push(`${y}${m}01`);
+  }
+  push("20260401");
+  return out;
+}
+
+// 一度成功した date を覚えておき、次回ロード時に最優先で試す
+let knownGoodDate: string | null | undefined = undefined;
+
+async function fetchZip(date: string | null, key: string): Promise<ArrayBuffer | null> {
+  const url = new URL(STATIC_GTFS_URL);
+  if (date) url.searchParams.set("date", date);
+  url.searchParams.set("acl:consumerKey", key);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const res = await fetch(url.toString(), {
+      cache: "no-store",
+      signal: controller.signal,
+      redirect: "follow",
+    });
+    if (!res.ok) return null;
+    const buf = await res.arrayBuffer();
+    const head = new Uint8Array(buf.slice(0, 4));
+    if (head[0] !== 0x50 || head[1] !== 0x4b) return null; // not a zip
+    return buf;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export interface RouteInfo {
   routeId: string;
@@ -50,73 +104,65 @@ let cache: StaticGtfs | null = null;
 let inflight: Promise<StaticGtfs> | null = null;
 let lastError: string | null = null;
 
-function startLoad(): Promise<StaticGtfs> {
-  if (inflight) return inflight;
-  inflight = loadStaticGtfs()
-    .then((data) => {
-      cache = data;
-      lastError = null;
-      return data;
-    })
-    .catch((e) => {
-      lastError = e instanceof Error ? e.message : String(e);
-      throw e;
-    })
-    .finally(() => {
-      inflight = null;
-    });
-  return inflight;
-}
-
-export function getStaticGtfsSync(): {
+export function getCachedStaticGtfs(): {
   data: StaticGtfs | null;
-  loading: boolean;
   error: string | null;
 } {
-  const now = Date.now();
-  if (cache && now - cache.loadedAt < TTL_MS) {
-    return { data: cache, loading: false, error: null };
-  }
-  startLoad().catch(() => {});
-  return { data: cache, loading: inflight !== null, error: lastError };
+  const fresh = cache && Date.now() - cache.loadedAt < TTL_MS ? cache : null;
+  return { data: fresh ?? cache, error: lastError };
 }
 
-export async function getStaticGtfs(): Promise<StaticGtfs> {
-  const now = Date.now();
-  if (cache && now - cache.loadedAt < TTL_MS) return cache;
-  return startLoad();
+// 確実にロードを待つ。成功すればモジュールキャッシュに保持し、TTL 内は再取得しない。
+// 失敗してもキャッシュ済みデータがあればそれを返す（古くても無いよりまし）。
+export async function getStaticGtfs(): Promise<StaticGtfs | null> {
+  if (cache && Date.now() - cache.loadedAt < TTL_MS) return cache;
+  if (!inflight) {
+    inflight = loadStaticGtfs()
+      .then((data) => {
+        cache = data;
+        lastError = null;
+        return data;
+      })
+      .catch((e) => {
+        lastError = e instanceof Error ? e.message : String(e);
+        throw e;
+      })
+      .finally(() => {
+        inflight = null;
+      });
+  }
+  try {
+    return await inflight;
+  } catch {
+    return cache; // ロード失敗時は（あれば）古いキャッシュ
+  }
 }
 
 async function loadStaticGtfs(): Promise<StaticGtfs> {
   const key = process.env.ODPT_CONSUMER_KEY;
   if (!key) throw new Error("ODPT_CONSUMER_KEY is not set");
 
-  const url = new URL(STATIC_GTFS_URL);
-  url.searchParams.set("date", GTFS_VERSION_DATE);
-  url.searchParams.set("acl:consumerKey", key);
+  const candidates =
+    knownGoodDate !== undefined
+      ? [knownGoodDate, ...candidateDates().filter((d) => d !== knownGoodDate)]
+      : candidateDates();
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20000);
-  let res: Response;
-  try {
-    res = await fetch(url.toString(), {
-      cache: "no-store",
-      signal: controller.signal,
-      redirect: "follow",
-    });
-  } finally {
-    clearTimeout(timer);
+  let buf: ArrayBuffer | null = null;
+  let usedDate: string | null = null;
+  const tried: string[] = [];
+  for (const date of candidates) {
+    tried.push(date ?? "(no date)");
+    buf = await fetchZip(date, key);
+    if (buf) {
+      usedDate = date;
+      break;
+    }
   }
 
-  if (!res.ok) {
-    throw new Error(`static GTFS ${res.status}`);
+  if (!buf) {
+    throw new Error(`no working static GTFS version (tried: ${tried.join(", ")})`);
   }
-  const buf = await res.arrayBuffer();
-  const head = new Uint8Array(buf.slice(0, 4));
-  if (head[0] !== 0x50 || head[1] !== 0x4b) {
-    throw new Error("static GTFS response is not a zip");
-  }
-  const usedUrl = STATIC_GTFS_URL;
+  knownGoodDate = usedDate;
 
   const zip = await JSZip.loadAsync(buf);
 
@@ -133,7 +179,7 @@ async function loadStaticGtfs(): Promise<StaticGtfs> {
     stops: parseStops(stopsCsv),
     trips: parseTrips(tripsCsv),
     loadedAt: Date.now(),
-    sourceUrl: usedUrl,
+    sourceUrl: usedDate ? `${STATIC_GTFS_URL}?date=${usedDate}` : STATIC_GTFS_URL,
   };
 }
 
