@@ -1,40 +1,41 @@
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 const BASE = "https://api.odpt.org/api/v4/files/odpt/KeioBus/AllLines.zip";
 
-function datesToTry(): string[] {
-  const out = new Set<string>();
-  // 明示候補
-  ["20260401", "20260601", "20260501"].forEach((d) => out.add(d));
-  // 今日から過去90日、各月1日と当日を候補に
+function candidateDates(): string[] {
+  const out = new Set<string>(["20260401"]);
   const now = new Date();
-  for (let i = 0; i < 120; i += 1) {
-    const d = new Date(now.getTime() - i * 86400000);
+  // 直近6ヶ月の月初 + 今日
+  for (let i = 0; i < 6; i += 1) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
     const y = d.getUTCFullYear();
     const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-    const day = String(d.getUTCDate()).padStart(2, "0");
-    if (day === "01") out.add(`${y}${m}${day}`);
+    out.add(`${y}${m}01`);
   }
+  const y = now.getUTCFullYear();
+  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(now.getUTCDate()).padStart(2, "0");
+  out.add(`${y}${m}${day}`);
   return [...out];
 }
 
-async function probe(url: string) {
+async function probe(label: string, url: string) {
   const key = process.env.ODPT_CONSUMER_KEY || "";
   const full = url.includes("?")
     ? `${url}&acl:consumerKey=${encodeURIComponent(key)}`
     : `${url}?acl:consumerKey=${encodeURIComponent(key)}`;
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
+    const timer = setTimeout(() => controller.abort(), 12000);
     const res = await fetch(full, {
       cache: "no-store",
       signal: controller.signal,
       redirect: "follow",
     });
     clearTimeout(timer);
-    const ct = res.headers.get("content-type") || "";
     let isZip = false;
     let bytes = 0;
     if (res.ok) {
@@ -43,31 +44,18 @@ async function probe(url: string) {
       const head = new Uint8Array(buf.slice(0, 2));
       isZip = head[0] === 0x50 && head[1] === 0x4b;
     }
-    return { status: res.status, contentType: ct, isZip, bytes };
+    return { label, status: res.status, isZip, bytes };
   } catch (e) {
-    return { status: -1, error: e instanceof Error ? e.message : String(e) };
+    return { label, status: -1, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
 export async function GET() {
-  // まず date なし
-  const noDate = await probe(BASE);
-
-  // 日付つきを順に（最初に zip が取れたら止める）
-  const dated: Record<string, unknown> = {};
-  let firstWorking: string | null = null;
-  for (const d of datesToTry()) {
-    const r = await probe(`${BASE}?date=${d}`);
-    dated[d] = r;
-    if (r.isZip) {
-      firstWorking = d;
-      break;
-    }
-  }
-
-  return NextResponse.json({
-    noDate,
-    firstWorkingDate: firstWorking,
-    dated,
-  });
+  const probes = [
+    probe("noDate", BASE),
+    ...candidateDates().map((d) => probe(d, `${BASE}?date=${d}`)),
+  ];
+  const results = await Promise.all(probes);
+  const working = results.filter((r) => r.isZip).map((r) => r.label);
+  return NextResponse.json({ working, results });
 }
