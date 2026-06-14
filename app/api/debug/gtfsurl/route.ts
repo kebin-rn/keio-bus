@@ -1,61 +1,83 @@
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 const BASE = "https://api.odpt.org/api/v4/files/odpt/KeioBus/AllLines.zip";
 
-function candidateDates(): string[] {
-  const out = new Set<string>(["20260401"]);
+// 直近 N 日を日単位で生成（新しい順）
+function recentDates(days: number): string[] {
+  const out: string[] = [];
   const now = new Date();
-  // 直近6ヶ月の月初 + 今日
-  for (let i = 0; i < 6; i += 1) {
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+  for (let i = 0; i < days; i += 1) {
+    const d = new Date(now.getTime() - i * 86400000);
     const y = d.getUTCFullYear();
     const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-    out.add(`${y}${m}01`);
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    out.push(`${y}${m}${day}`);
   }
-  const y = now.getUTCFullYear();
-  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(now.getUTCDate()).padStart(2, "0");
-  out.add(`${y}${m}${day}`);
-  return Array.from(out);
+  return out;
 }
 
-async function probe(label: string, url: string) {
+// 本体をダウンロードせず先頭数バイトだけ取得して存在/zip 判定
+async function exists(date: string | null) {
   const key = process.env.ODPT_CONSUMER_KEY || "";
-  const full = url.includes("?")
-    ? `${url}&acl:consumerKey=${encodeURIComponent(key)}`
-    : `${url}?acl:consumerKey=${encodeURIComponent(key)}`;
+  const url = new URL(BASE);
+  if (date) url.searchParams.set("date", date);
+  url.searchParams.set("acl:consumerKey", key);
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12000);
-    const res = await fetch(full, {
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(url.toString(), {
       cache: "no-store",
       signal: controller.signal,
       redirect: "follow",
+      headers: { Range: "bytes=0-3" },
     });
     clearTimeout(timer);
     let isZip = false;
-    let bytes = 0;
-    if (res.ok) {
+    if (res.ok || res.status === 206) {
       const buf = await res.arrayBuffer();
-      bytes = buf.byteLength;
       const head = new Uint8Array(buf.slice(0, 2));
       isZip = head[0] === 0x50 && head[1] === 0x4b;
     }
-    return { label, status: res.status, isZip, bytes };
+    return { date: date ?? "(no date)", status: res.status, isZip };
   } catch (e) {
-    return { label, status: -1, error: e instanceof Error ? e.message : String(e) };
+    return {
+      date: date ?? "(no date)",
+      status: -1,
+      isZip: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
   }
 }
 
+async function inBatches<T, R>(
+  items: T[],
+  size: number,
+  fn: (t: T) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = [];
+  for (let i = 0; i < items.length; i += size) {
+    const batch = items.slice(i, i + size);
+    out.push(...(await Promise.all(batch.map(fn))));
+  }
+  return out;
+}
+
 export async function GET() {
-  const probes = [
-    probe("noDate", BASE),
-    ...candidateDates().map((d) => probe(d, `${BASE}?date=${d}`)),
-  ];
-  const results = await Promise.all(probes);
-  const working = results.filter((r) => r.isZip).map((r) => r.label);
-  return NextResponse.json({ working, results });
+  const dates = recentDates(150);
+  const results = await inBatches(dates, 20, (d) => exists(d));
+  const noDate = await exists(null);
+  const working = results.filter((r) => r.isZip).map((r) => r.date);
+  return NextResponse.json({
+    noDate,
+    workingDates: working,
+    latestWorking: working[0] ?? null,
+    // 200/206 だが zip でないもの（参考）
+    okButNotZip: results
+      .filter((r) => (r.status === 200 || r.status === 206) && !r.isZip)
+      .map((r) => r.date),
+    scanned: dates.length,
+  });
 }
