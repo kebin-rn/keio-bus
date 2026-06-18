@@ -50,11 +50,7 @@ export async function GET() {
       if (officeId) usedOfficeIds.add(officeId);
 
       const id = v.vehicle?.id || ent.id || `${pos.latitude},${pos.longitude}`;
-      const tsRaw = v.timestamp;
-      const tsNum =
-        tsRaw && typeof tsRaw === "object" && "toNumber" in tsRaw
-          ? (tsRaw as { toNumber: () => number }).toNumber()
-          : Number(tsRaw ?? 0);
+      const tsNum = Number(v.timestamp ?? 0);
 
       buses.push({
         "@id": id,

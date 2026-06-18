@@ -1,11 +1,75 @@
-import GtfsRealtimeBindings from "gtfs-realtime-bindings";
+import protobuf from "protobufjs";
+import { GTFS_REALTIME_PROTO } from "./gtfs-realtime-proto";
 
 const VEHICLE_URL =
   "https://api.odpt.org/api/v4/gtfs/realtime/odpt_KeioBus_AllLines_vehicle";
 const TRIP_UPDATE_URL =
   "https://api.odpt.org/api/v4/gtfs/realtime/odpt_KeioBus_AllLines_trip_update";
 
-type FeedMessage = GtfsRealtimeBindings.transit_realtime.FeedMessage;
+// プロト定義は一度だけ parse して FeedMessage 型をキャッシュ
+let feedMessageType: protobuf.Type | null = null;
+function getFeedMessageType(): protobuf.Type {
+  if (!feedMessageType) {
+    const root = protobuf.parse(GTFS_REALTIME_PROTO).root;
+    feedMessageType = root.lookupType("transit_realtime.FeedMessage");
+  }
+  return feedMessageType;
+}
+
+// 利用側に最小限の型を提供。protobufjs の toObject() 出力 (camelCase) と一致させる。
+export interface Position {
+  latitude: number;
+  longitude: number;
+  bearing?: number;
+  speed?: number;
+}
+
+export interface TripDescriptor {
+  tripId?: string;
+  routeId?: string;
+  directionId?: number;
+}
+
+export interface VehicleDescriptor {
+  id?: string;
+  label?: string;
+}
+
+export interface StopTimeUpdate {
+  stopSequence?: number;
+  stopId?: string;
+  arrival?: { delay?: number };
+  departure?: { delay?: number };
+}
+
+export interface VehiclePosition {
+  trip?: TripDescriptor;
+  vehicle?: VehicleDescriptor;
+  position?: Position;
+  currentStopSequence?: number;
+  stopId?: string;
+  currentStatus?: number;
+  timestamp?: number;
+  occupancyStatus?: number;
+}
+
+export interface TripUpdate {
+  trip: TripDescriptor;
+  vehicle?: VehicleDescriptor;
+  stopTimeUpdate?: StopTimeUpdate[];
+  delay?: number;
+  timestamp?: number;
+}
+
+export interface FeedEntity {
+  id: string;
+  vehicle?: VehiclePosition;
+  tripUpdate?: TripUpdate;
+}
+
+export interface FeedMessage {
+  entity: FeedEntity[];
+}
 
 async function fetchFeed(url: string): Promise<FeedMessage> {
   const key = process.env.ODPT_CONSUMER_KEY;
@@ -18,9 +82,17 @@ async function fetchFeed(url: string): Promise<FeedMessage> {
     throw new Error(`GTFS-RT ${res.status}: ${body.slice(0, 200)}`);
   }
   const buf = await res.arrayBuffer();
-  return GtfsRealtimeBindings.transit_realtime.FeedMessage.decode(
-    new Uint8Array(buf),
-  );
+  const type = getFeedMessageType();
+  const msg = type.decode(new Uint8Array(buf));
+  // toObject で素の JS オブジェクトに変換。longs: Number で uint64(timestamp 等)
+  // を Long ラッパーではなく Number 化 (Unix秒なので 2^53 余裕で収まる)
+  return type.toObject(msg, {
+    longs: Number,
+    enums: Number,
+    defaults: false,
+    arrays: true,
+    objects: false,
+  }) as FeedMessage;
 }
 
 export async function fetchKeioBusFeeds(): Promise<{
@@ -51,32 +123,24 @@ export function buildTripInfo(
     if (!tu?.trip?.tripId) continue;
 
     const info: TripInfo = {};
-
     if (tu.trip.routeId) info.routeId = tu.trip.routeId;
 
-    let delay: number | null | undefined = tu.delay;
+    let delay: number | undefined = tu.delay;
     let nextStopId: string | undefined;
     for (const stu of tu.stopTimeUpdate ?? []) {
-      if (
-        nextStopId === undefined &&
-        stu.stopId !== undefined &&
-        stu.stopId !== null
-      ) {
+      if (nextStopId === undefined && stu.stopId !== undefined) {
         nextStopId = stu.stopId;
       }
-      if (delay === undefined || delay === null) {
-        if (stu.arrival?.delay !== undefined && stu.arrival.delay !== null) {
+      if (delay === undefined) {
+        if (stu.arrival?.delay !== undefined) {
           delay = stu.arrival.delay;
-        } else if (
-          stu.departure?.delay !== undefined &&
-          stu.departure.delay !== null
-        ) {
+        } else if (stu.departure?.delay !== undefined) {
           delay = stu.departure.delay;
         }
       }
-      if (delay !== undefined && delay !== null && nextStopId !== undefined) break;
+      if (delay !== undefined && nextStopId !== undefined) break;
     }
-    if (delay !== undefined && delay !== null) info.delay = delay;
+    if (delay !== undefined) info.delay = delay;
     if (nextStopId !== undefined) info.nextStopId = nextStopId;
 
     map[tu.trip.tripId] = info;
