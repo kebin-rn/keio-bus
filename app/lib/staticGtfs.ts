@@ -197,21 +197,56 @@ async function loadStaticGtfs(): Promise<StaticGtfs> {
 
   const zip = await JSZip.loadAsync(buf);
 
-  const [officeCsv, routesCsv, stopsCsv, tripsCsv] = await Promise.all([
-    zip.file("office_jp.txt")?.async("string") ?? Promise.resolve(""),
-    zip.file("routes.txt")?.async("string") ?? Promise.resolve(""),
-    zip.file("stops.txt")?.async("string") ?? Promise.resolve(""),
-    zip.file("trips.txt")?.async("string") ?? Promise.resolve(""),
-  ]);
+  const [officeCsv, routesCsv, stopsCsv, tripsCsv, stopTimesCsv] =
+    await Promise.all([
+      zip.file("office_jp.txt")?.async("string") ?? Promise.resolve(""),
+      zip.file("routes.txt")?.async("string") ?? Promise.resolve(""),
+      zip.file("stops.txt")?.async("string") ?? Promise.resolve(""),
+      zip.file("trips.txt")?.async("string") ?? Promise.resolve(""),
+      zip.file("stop_times.txt")?.async("string") ?? Promise.resolve(""),
+    ]);
+
+  const trips = parseTrips(tripsCsv);
+  // 京王バスの trips.txt は trip_headsign が空で、行き先は stop_times.txt の
+  // stop_headsign 側に入っている。trip_id ごとに最初の stop_headsign を方面として採用。
+  const headsignByTrip = parseStopHeadsignsByTrip(stopTimesCsv);
+  for (const t of Object.values(trips)) {
+    if (!t.headsign && headsignByTrip[t.tripId]) {
+      t.headsign = headsignByTrip[t.tripId];
+    }
+  }
 
   return {
     offices: parseOffices(officeCsv),
     routes: parseRoutes(routesCsv),
     stops: parseStops(stopsCsv),
-    trips: parseTrips(tripsCsv),
+    trips,
     loadedAt: Date.now(),
     sourceUrl: `${STATIC_GTFS_URL}?date=${usedDate}`,
   };
+}
+
+// stop_times.txt は ~45 万行と大きいので、full parseCsv は避けて trip_id と
+// stop_headsign の 2 列だけを行単位で抜き出す。同じ trip_id の 1 件目だけ採用。
+function parseStopHeadsignsByTrip(csv: string): Record<string, string> {
+  if (!csv) return {};
+  const lines = csv.split(/\r?\n/);
+  if (lines.length < 2) return {};
+  const header = splitCsvLine(lines[0]).map((h) => h.replace(/^﻿/, ""));
+  const tripIdx = header.indexOf("trip_id");
+  const headIdx = header.indexOf("stop_headsign");
+  if (tripIdx < 0 || headIdx < 0) return {};
+  const out: Record<string, string> = {};
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line) continue;
+    const cells = splitCsvLine(line);
+    const tid = cells[tripIdx];
+    const head = cells[headIdx];
+    if (!tid || !head || out[tid]) continue;
+    out[tid] = head;
+  }
+  return out;
 }
 
 function parseCsv(text: string): Record<string, string>[] {
