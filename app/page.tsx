@@ -6,6 +6,7 @@ import { APIProvider } from "@vis.gl/react-google-maps";
 import BusMap from "./components/BusMap";
 import BusInfoPanel from "./components/BusInfoPanel";
 import { useBusData } from "./hooks/useBusData";
+import { shortenPatternId } from "./lib/format";
 
 export default function Page() {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "";
@@ -36,6 +37,36 @@ export default function Page() {
     ? officeBuses.filter((b) => b["odpt:busroutePattern"] === routeFilter)
     : officeBuses;
 
+  const officeOptions = useMemo(() => {
+    const counts: Record<string, { name: string; count: number }> = {};
+    for (const b of buses) {
+      const oid = b.officeId;
+      if (!oid) continue;
+      const name = officeMap[oid]?.name || oid;
+      counts[oid] = counts[oid]
+        ? { name, count: counts[oid].count + 1 }
+        : { name, count: 1 };
+    }
+    return Object.entries(counts)
+      .map(([id, v]) => ({ id, ...v }))
+      .sort((a, b) => a.name.localeCompare(b.name, "ja"));
+  }, [buses, officeMap]);
+
+  const routeOptions = useMemo(() => {
+    const counts: Record<string, { title: string; count: number }> = {};
+    for (const b of officeBuses) {
+      const pid = b["odpt:busroutePattern"];
+      if (!pid) continue;
+      const title = patternMap[pid]?.["dc:title"] || shortenPatternId(pid);
+      counts[pid] = counts[pid]
+        ? { title, count: counts[pid].count + 1 }
+        : { title, count: 1 };
+    }
+    return Object.entries(counts)
+      .map(([id, v]) => ({ id, ...v }))
+      .sort((a, b) => a.title.localeCompare(b.title, "ja"));
+  }, [officeBuses, patternMap]);
+
   // 系統選択時のみ方面オプションを構築 (= 当該系統の trip_headsign の集合)
   const directionOptions = useMemo(() => {
     if (!routeFilter) return [];
@@ -64,8 +95,9 @@ export default function Page() {
     <div
       style={{
         display: "grid",
-        gridTemplateRows: "auto 1fr",
+        gridTemplateRows: "auto auto 1fr",
         height: "100vh",
+        minHeight: 0,
       }}
     >
       <Header
@@ -75,18 +107,46 @@ export default function Page() {
         onRefresh={fetchBuses}
         totalBuses={buses.length}
       />
+      {apiKey && (
+        <FilterToolbar
+          allCount={buses.length}
+          officeCount={officeBuses.length}
+          officeFilter={officeFilter}
+          routeFilter={routeFilter}
+          directionFilter={directionFilter}
+          searchQuery={searchQuery}
+          officeOptions={officeOptions}
+          routeOptions={routeOptions}
+          directionOptions={directionOptions}
+          onChangeOffice={(v) => {
+            setOfficeFilter(v);
+            setRouteFilter("");
+            setDirectionFilter("");
+            setSelectedBusId(null);
+          }}
+          onChangeRoute={(v) => {
+            setRouteFilter(v);
+            setDirectionFilter("");
+            setSelectedBusId(null);
+          }}
+          onChangeDirection={(v) => {
+            setDirectionFilter(v);
+            setSelectedBusId(null);
+          }}
+          onChangeSearch={setSearchQuery}
+        />
+      )}
       {!apiKey ? (
         <ApiKeyMissing />
       ) : (
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(0,1fr) 340px",
-            height: "100%",
+            gridTemplateColumns: "minmax(0,1fr) 320px",
             minHeight: 0,
           }}
         >
-          <div style={{ position: "relative", minHeight: 0 }}>
+          <div style={{ position: "relative", minHeight: 0, minWidth: 0 }}>
             <APIProvider apiKey={apiKey}>
               <BusMap
                 buses={displayedBuses}
@@ -100,35 +160,11 @@ export default function Page() {
             {loading && <LoadingOverlay />}
           </div>
           <BusInfoPanel
-            allBuses={buses}
-            officeBuses={officeBuses}
             displayedBuses={displayedBuses}
             patternMap={patternMap}
             stopMap={stopMap}
-            officeMap={officeMap}
-            directionOptions={directionOptions}
             selectedBusId={selectedBusId}
             onSelectBus={setSelectedBusId}
-            officeFilter={officeFilter}
-            onChangeOfficeFilter={(v) => {
-              setOfficeFilter(v);
-              setRouteFilter("");
-              setDirectionFilter("");
-              setSelectedBusId(null);
-            }}
-            routeFilter={routeFilter}
-            onChangeRouteFilter={(v) => {
-              setRouteFilter(v);
-              setDirectionFilter("");
-              setSelectedBusId(null);
-            }}
-            directionFilter={directionFilter}
-            onChangeDirectionFilter={(v) => {
-              setDirectionFilter(v);
-              setSelectedBusId(null);
-            }}
-            searchQuery={searchQuery}
-            onChangeSearchQuery={setSearchQuery}
           />
         </div>
       )}
@@ -221,6 +257,169 @@ function Header({
         </Link>
       </div>
     </header>
+  );
+}
+
+function FilterToolbar({
+  allCount,
+  officeCount,
+  officeFilter,
+  routeFilter,
+  directionFilter,
+  searchQuery,
+  officeOptions,
+  routeOptions,
+  directionOptions,
+  onChangeOffice,
+  onChangeRoute,
+  onChangeDirection,
+  onChangeSearch,
+}: {
+  allCount: number;
+  officeCount: number;
+  officeFilter: string;
+  routeFilter: string;
+  directionFilter: string;
+  searchQuery: string;
+  officeOptions: { id: string; name: string; count: number }[];
+  routeOptions: { id: string; title: string; count: number }[];
+  directionOptions: { name: string; count: number }[];
+  onChangeOffice: (v: string) => void;
+  onChangeRoute: (v: string) => void;
+  onChangeDirection: (v: string) => void;
+  onChangeSearch: (v: string) => void;
+}) {
+  const showDirection = !!routeFilter && directionOptions.length > 0;
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: 10,
+        padding: "10px 18px",
+        background: "#0f172a",
+        borderBottom: "1px solid #1e293b",
+      }}
+    >
+      <div
+        style={{ position: "relative", flex: "1 1 220px", maxWidth: 320 }}
+      >
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(e) => onChangeSearch(e.target.value)}
+          placeholder="車番で検索 (例: 21303)"
+          inputMode="search"
+          autoComplete="off"
+          aria-label="車番で検索"
+          style={{
+            width: "100%",
+            height: 34,
+            padding: "0 30px 0 10px",
+            background: "#1e293b",
+            color: "#f1f5f9",
+            border: "1px solid #334155",
+            borderRadius: 6,
+            font: "inherit",
+            fontSize: 13,
+          }}
+        />
+        {searchQuery && (
+          <button
+            onClick={() => onChangeSearch("")}
+            aria-label="検索条件をクリア"
+            style={{
+              position: "absolute",
+              right: 4,
+              top: "50%",
+              transform: "translateY(-50%)",
+              width: 26,
+              height: 26,
+              color: "#94a3b8",
+              fontSize: 16,
+              lineHeight: 1,
+              borderRadius: 4,
+            }}
+          >
+            ×
+          </button>
+        )}
+      </div>
+      <ToolbarSelect
+        ariaLabel="営業所"
+        value={officeFilter}
+        onChange={onChangeOffice}
+        placeholder={`営業所: すべて (${allCount}台)`}
+        options={officeOptions.map((o) => ({
+          value: o.id,
+          label: `${o.name} (${o.count})`,
+        }))}
+      />
+      <ToolbarSelect
+        ariaLabel="系統"
+        value={routeFilter}
+        onChange={onChangeRoute}
+        placeholder={`系統: すべて (${officeCount}台)`}
+        options={routeOptions.map((r) => ({
+          value: r.id,
+          label: `${r.title} (${r.count})`,
+        }))}
+      />
+      {showDirection && (
+        <ToolbarSelect
+          ariaLabel="方面"
+          value={directionFilter}
+          onChange={onChangeDirection}
+          placeholder="方面: すべて"
+          options={directionOptions.map((d) => ({
+            value: d.name,
+            label: `${d.name} 行 (${d.count})`,
+          }))}
+        />
+      )}
+    </div>
+  );
+}
+
+function ToolbarSelect({
+  ariaLabel,
+  value,
+  onChange,
+  placeholder,
+  options,
+}: {
+  ariaLabel: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <select
+      aria-label={ariaLabel}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      style={{
+        flex: "0 1 220px",
+        minWidth: 160,
+        maxWidth: 260,
+        height: 34,
+        padding: "0 8px",
+        background: "#1e293b",
+        color: "#f1f5f9",
+        border: "1px solid #334155",
+        borderRadius: 6,
+        fontSize: 13,
+      }}
+    >
+      <option value="">{placeholder}</option>
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
   );
 }
 
