@@ -9,31 +9,43 @@ import type {
 import { classifyDelay, shortenPatternId, shortenStopId } from "@/app/lib/format";
 
 interface Props {
-  buses: OdptBus[];
   allBuses: OdptBus[];
+  officeBuses: OdptBus[];
+  displayedBuses: OdptBus[];
   patternMap: Record<string, OdptBusroutePattern>;
   stopMap: Record<string, { title: string; lat?: number; lng?: number }>;
   officeMap: Record<string, OfficeEntry>;
+  directionOptions: { name: string; count: number }[];
   selectedBusId: string | null;
   onSelectBus: (id: string | null) => void;
   officeFilter: string;
   onChangeOfficeFilter: (v: string) => void;
   routeFilter: string;
   onChangeRouteFilter: (v: string) => void;
+  directionFilter: string;
+  onChangeDirectionFilter: (v: string) => void;
+  searchQuery: string;
+  onChangeSearchQuery: (v: string) => void;
 }
 
 export default function BusInfoPanel({
-  buses,
   allBuses,
+  officeBuses,
+  displayedBuses,
   patternMap,
   stopMap,
   officeMap,
+  directionOptions,
   selectedBusId,
   onSelectBus,
   officeFilter,
   onChangeOfficeFilter,
   routeFilter,
   onChangeRouteFilter,
+  directionFilter,
+  onChangeDirectionFilter,
+  searchQuery,
+  onChangeSearchQuery,
 }: Props) {
   const stats = useMemo(() => {
     let onTime = 0,
@@ -41,7 +53,7 @@ export default function BusInfoPanel({
       major = 0,
       early = 0,
       unknown = 0;
-    for (const b of buses) {
+    for (const b of displayedBuses) {
       const c = classifyDelay(b["odpt:delay"]).level;
       if (c === "ontime") onTime++;
       else if (c === "minor") minor++;
@@ -49,8 +61,8 @@ export default function BusInfoPanel({
       else if (c === "early") early++;
       else unknown++;
     }
-    return { total: buses.length, onTime, minor, major, early, unknown };
-  }, [buses]);
+    return { total: displayedBuses.length, onTime, minor, major, early, unknown };
+  }, [displayedBuses]);
 
   const officeOptions = useMemo(() => {
     const counts: Record<string, { name: string; count: number }> = {};
@@ -69,7 +81,7 @@ export default function BusInfoPanel({
 
   const routeOptions = useMemo(() => {
     const counts: Record<string, { title: string; count: number }> = {};
-    for (const b of buses) {
+    for (const b of officeBuses) {
       const pid = b["odpt:busroutePattern"];
       if (!pid) continue;
       const title =
@@ -81,18 +93,17 @@ export default function BusInfoPanel({
     return Object.entries(counts)
       .map(([id, v]) => ({ id, ...v }))
       .sort((a, b) => a.title.localeCompare(b.title, "ja"));
-  }, [buses, patternMap]);
+  }, [officeBuses, patternMap]);
 
-  const filtered = useMemo(() => {
-    const list = routeFilter
-      ? buses.filter((b) => b["odpt:busroutePattern"] === routeFilter)
-      : buses;
-    return [...list].sort((a, b) => {
-      const da = a["odpt:delay"] ?? -Infinity;
-      const db = b["odpt:delay"] ?? -Infinity;
-      return db - da;
-    });
-  }, [buses, routeFilter]);
+  const sortedList = useMemo(
+    () =>
+      [...displayedBuses].sort((a, b) => {
+        const da = a["odpt:delay"] ?? -Infinity;
+        const db = b["odpt:delay"] ?? -Infinity;
+        return db - da;
+      }),
+    [displayedBuses],
+  );
 
   return (
     <aside
@@ -126,6 +137,58 @@ export default function BusInfoPanel({
           <StatBadge label="軽微" count={stats.minor} color="#eab308" />
           <StatBadge label="遅延" count={stats.major} color="#ef4444" />
           <StatBadge label="早発" count={stats.early} color="#0ea5e9" />
+        </div>
+      </div>
+
+      <div style={{ padding: "12px 18px", borderBottom: "1px solid #1e293b" }}>
+        <label
+          style={{
+            display: "block",
+            fontSize: 11,
+            color: "#94a3b8",
+            marginBottom: 6,
+          }}
+        >
+          車番で検索
+        </label>
+        <div style={{ position: "relative" }}>
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(e) => onChangeSearchQuery(e.target.value)}
+            placeholder="例: 21303"
+            inputMode="search"
+            autoComplete="off"
+            style={{
+              width: "100%",
+              padding: "8px 30px 8px 10px",
+              background: "#1e293b",
+              color: "#f1f5f9",
+              border: "1px solid #334155",
+              borderRadius: 6,
+              font: "inherit",
+            }}
+          />
+          {searchQuery && (
+            <button
+              onClick={() => onChangeSearchQuery("")}
+              aria-label="検索条件をクリア"
+              style={{
+                position: "absolute",
+                right: 4,
+                top: "50%",
+                transform: "translateY(-50%)",
+                width: 24,
+                height: 24,
+                color: "#94a3b8",
+                fontSize: 16,
+                lineHeight: 1,
+                borderRadius: 4,
+              }}
+            >
+              ×
+            </button>
+          )}
         </div>
       </div>
 
@@ -186,7 +249,7 @@ export default function BusInfoPanel({
             borderRadius: 6,
           }}
         >
-          <option value="">すべて ({buses.length}台)</option>
+          <option value="">すべて ({officeBuses.length}台)</option>
           {routeOptions.map((r) => (
             <option key={r.id} value={r.id}>
               {r.title} ({r.count}台)
@@ -195,13 +258,47 @@ export default function BusInfoPanel({
         </select>
       </div>
 
+      {routeFilter && directionOptions.length > 0 && (
+        <div style={{ padding: "12px 18px", borderBottom: "1px solid #1e293b" }}>
+          <label
+            style={{
+              display: "block",
+              fontSize: 11,
+              color: "#94a3b8",
+              marginBottom: 6,
+            }}
+          >
+            方面で絞り込み
+          </label>
+          <select
+            value={directionFilter}
+            onChange={(e) => onChangeDirectionFilter(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "8px 10px",
+              background: "#1e293b",
+              color: "#f1f5f9",
+              border: "1px solid #334155",
+              borderRadius: 6,
+            }}
+          >
+            <option value="">すべての方面</option>
+            {directionOptions.map((d) => (
+              <option key={d.name} value={d.name}>
+                {d.name} 行 ({d.count}台)
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div style={{ overflowY: "auto", flex: 1 }}>
-        {filtered.length === 0 ? (
+        {sortedList.length === 0 ? (
           <div style={{ padding: 24, textAlign: "center", color: "#64748b" }}>
-            運行中のバスはありません
+            該当するバスはありません
           </div>
         ) : (
-          filtered.map((bus) => (
+          sortedList.map((bus) => (
             <BusRow
               key={bus["@id"]}
               bus={bus}
@@ -296,6 +393,12 @@ function BusRow({
           }}
         >
           {title}
+          {bus.tripHeadsign && (
+            <span style={{ color: "#94a3b8", fontWeight: 400 }}>
+              {" "}
+              · {bus.tripHeadsign} 行
+            </span>
+          )}
         </div>
         <span
           style={{

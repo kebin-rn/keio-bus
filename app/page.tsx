@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { APIProvider } from "@vis.gl/react-google-maps";
 import BusMap from "./components/BusMap";
@@ -25,14 +25,40 @@ export default function Page() {
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [officeFilter, setOfficeFilter] = useState("");
   const [routeFilter, setRouteFilter] = useState("");
+  const [directionFilter, setDirectionFilter] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const officeBuses = officeFilter
     ? buses.filter((b) => b.officeId === officeFilter)
     : buses;
 
-  const displayedBuses = routeFilter
+  const routedBuses = routeFilter
     ? officeBuses.filter((b) => b["odpt:busroutePattern"] === routeFilter)
     : officeBuses;
+
+  // 系統選択時のみ方面オプションを構築 (= 当該系統の trip_headsign の集合)
+  const directionOptions = useMemo(() => {
+    if (!routeFilter) return [];
+    const counts = new Map<string, number>();
+    for (const b of routedBuses) {
+      const h = b.tripHeadsign;
+      if (h) counts.set(h, (counts.get(h) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name, "ja"));
+  }, [routedBuses, routeFilter]);
+
+  const directedBuses = directionFilter
+    ? routedBuses.filter((b) => b.tripHeadsign === directionFilter)
+    : routedBuses;
+
+  const q = searchQuery.trim().toLowerCase();
+  const displayedBuses = q
+    ? directedBuses.filter((b) =>
+        (b["odpt:vehicleNumber"] ?? "").toLowerCase().includes(q),
+      )
+    : directedBuses;
 
   return (
     <div
@@ -74,24 +100,35 @@ export default function Page() {
             {loading && <LoadingOverlay />}
           </div>
           <BusInfoPanel
-            buses={officeBuses}
             allBuses={buses}
+            officeBuses={officeBuses}
+            displayedBuses={displayedBuses}
             patternMap={patternMap}
             stopMap={stopMap}
             officeMap={officeMap}
+            directionOptions={directionOptions}
             selectedBusId={selectedBusId}
             onSelectBus={setSelectedBusId}
             officeFilter={officeFilter}
             onChangeOfficeFilter={(v) => {
               setOfficeFilter(v);
               setRouteFilter("");
+              setDirectionFilter("");
               setSelectedBusId(null);
             }}
             routeFilter={routeFilter}
             onChangeRouteFilter={(v) => {
               setRouteFilter(v);
+              setDirectionFilter("");
               setSelectedBusId(null);
             }}
+            directionFilter={directionFilter}
+            onChangeDirectionFilter={(v) => {
+              setDirectionFilter(v);
+              setSelectedBusId(null);
+            }}
+            searchQuery={searchQuery}
+            onChangeSearchQuery={setSearchQuery}
           />
         </div>
       )}

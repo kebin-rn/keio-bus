@@ -30,14 +30,25 @@ export default function MobilePage() {
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [officeFilter, setOfficeFilter] = useState("");
   const [routeFilter, setRouteFilter] = useState("");
+  const [directionFilter, setDirectionFilter] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const officeBuses = officeFilter
     ? buses.filter((b) => b.officeId === officeFilter)
     : buses;
-  const displayedBuses = routeFilter
+  const routedBuses = routeFilter
     ? officeBuses.filter((b) => b["odpt:busroutePattern"] === routeFilter)
     : officeBuses;
+  const directedBuses = directionFilter
+    ? routedBuses.filter((b) => b.tripHeadsign === directionFilter)
+    : routedBuses;
+  const q = searchQuery.trim().toLowerCase();
+  const displayedBuses = q
+    ? directedBuses.filter((b) =>
+        (b["odpt:vehicleNumber"] ?? "").toLowerCase().includes(q),
+      )
+    : directedBuses;
 
   const officeOptions = useMemo(() => {
     const counts: Record<string, { name: string; count: number }> = {};
@@ -69,6 +80,18 @@ export default function MobilePage() {
       .sort((a, b) => a.title.localeCompare(b.title, "ja"));
   }, [officeBuses, patternMap]);
 
+  const directionOptions = useMemo(() => {
+    if (!routeFilter) return [];
+    const counts = new Map<string, number>();
+    for (const b of routedBuses) {
+      const h = b.tripHeadsign;
+      if (h) counts.set(h, (counts.get(h) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name, "ja"));
+  }, [routedBuses, routeFilter]);
+
   const selectedBus = useMemo(
     () => buses.find((b) => b["@id"] === selectedBusId) ?? null,
     [buses, selectedBusId],
@@ -93,19 +116,29 @@ export default function MobilePage() {
       <FilterBar
         officeFilter={officeFilter}
         routeFilter={routeFilter}
+        directionFilter={directionFilter}
+        searchQuery={searchQuery}
         officeOptions={officeOptions}
         routeOptions={routeOptions}
+        directionOptions={directionOptions}
         allCount={buses.length}
         filteredCount={officeBuses.length}
         onChangeOffice={(v) => {
           setOfficeFilter(v);
           setRouteFilter("");
+          setDirectionFilter("");
           setSelectedBusId(null);
         }}
         onChangeRoute={(v) => {
           setRouteFilter(v);
+          setDirectionFilter("");
           setSelectedBusId(null);
         }}
+        onChangeDirection={(v) => {
+          setDirectionFilter(v);
+          setSelectedBusId(null);
+        }}
+        onChangeSearch={setSearchQuery}
       />
 
       <div style={{ position: "relative", minHeight: 0 }}>
@@ -244,59 +277,128 @@ function MobileHeader({
 function FilterBar({
   officeFilter,
   routeFilter,
+  directionFilter,
+  searchQuery,
   officeOptions,
   routeOptions,
+  directionOptions,
   allCount,
   filteredCount,
   onChangeOffice,
   onChangeRoute,
+  onChangeDirection,
+  onChangeSearch,
 }: {
   officeFilter: string;
   routeFilter: string;
+  directionFilter: string;
+  searchQuery: string;
   officeOptions: { id: string; name: string; count: number }[];
   routeOptions: { id: string; title: string; count: number }[];
+  directionOptions: { name: string; count: number }[];
   allCount: number;
   filteredCount: number;
   onChangeOffice: (v: string) => void;
   onChangeRoute: (v: string) => void;
+  onChangeDirection: (v: string) => void;
+  onChangeSearch: (v: string) => void;
 }) {
+  const showDirection = routeFilter && directionOptions.length > 0;
   return (
     <div
       style={{
-        display: "grid",
-        gridTemplateColumns: "1fr 1fr",
+        display: "flex",
+        flexDirection: "column",
         gap: 8,
         padding: "8px 12px",
         background: "#0f172a",
         borderBottom: "1px solid #1e293b",
       }}
     >
-      <select
-        value={officeFilter}
-        onChange={(e) => onChangeOffice(e.target.value)}
-        style={selectStyle}
-        aria-label="営業所"
+      <div style={{ position: "relative" }}>
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(e) => onChangeSearch(e.target.value)}
+          placeholder="車番で検索 (例: 21303)"
+          inputMode="search"
+          autoComplete="off"
+          aria-label="車番で検索"
+          style={{
+            ...selectStyle,
+            paddingRight: 32,
+          }}
+        />
+        {searchQuery && (
+          <button
+            onClick={() => onChangeSearch("")}
+            aria-label="検索条件をクリア"
+            style={{
+              position: "absolute",
+              right: 4,
+              top: "50%",
+              transform: "translateY(-50%)",
+              width: 28,
+              height: 28,
+              color: "#94a3b8",
+              fontSize: 16,
+              lineHeight: 1,
+              borderRadius: 4,
+            }}
+          >
+            ×
+          </button>
+        )}
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 8,
+        }}
       >
-        <option value="">営業所: 全{allCount}台</option>
-        {officeOptions.map((o) => (
-          <option key={o.id} value={o.id}>
-            {o.name} ({o.count})
-          </option>
-        ))}
-      </select>
-      <select
-        value={routeFilter}
-        onChange={(e) => onChangeRoute(e.target.value)}
-        style={selectStyle}
-        aria-label="系統"
-      >
-        <option value="">系統: 全{filteredCount}台</option>
-        {routeOptions.map((r) => (
-          <option key={r.id} value={r.id}>
-            {r.title} ({r.count})
-          </option>
-        ))}
-      </select>
+        <select
+          value={officeFilter}
+          onChange={(e) => onChangeOffice(e.target.value)}
+          style={selectStyle}
+          aria-label="営業所"
+        >
+          <option value="">営業所: 全{allCount}台</option>
+          {officeOptions.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.name} ({o.count})
+            </option>
+          ))}
+        </select>
+        <select
+          value={routeFilter}
+          onChange={(e) => onChangeRoute(e.target.value)}
+          style={selectStyle}
+          aria-label="系統"
+        >
+          <option value="">系統: 全{filteredCount}台</option>
+          {routeOptions.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.title} ({r.count})
+            </option>
+          ))}
+        </select>
+      </div>
+      {showDirection && (
+        <select
+          value={directionFilter}
+          onChange={(e) => onChangeDirection(e.target.value)}
+          style={selectStyle}
+          aria-label="方面"
+        >
+          <option value="">方面: すべて</option>
+          {directionOptions.map((d) => (
+            <option key={d.name} value={d.name}>
+              {d.name} 行 ({d.count})
+            </option>
+          ))}
+        </select>
+      )}
     </div>
   );
 }
