@@ -188,6 +188,13 @@ async function resolveZip(
   return { buf, date: discovered };
 }
 
+// 有効な版の zip を取得（他モジュールが stop_times など追加ファイルを読むため）
+export async function fetchGtfsZip(): Promise<{ buf: ArrayBuffer; date: string }> {
+  const key = process.env.ODPT_CONSUMER_KEY;
+  if (!key) throw new Error("ODPT_CONSUMER_KEY is not set");
+  return resolveZip(key);
+}
+
 async function loadStaticGtfs(): Promise<StaticGtfs> {
   const key = process.env.ODPT_CONSUMER_KEY;
   if (!key) throw new Error("ODPT_CONSUMER_KEY is not set");

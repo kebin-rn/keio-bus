@@ -257,6 +257,20 @@ function MobileHeader({
         ↻
       </button>
       <Link
+        href="/stop"
+        style={{
+          fontSize: 11,
+          color: "#94a3b8",
+          padding: "8px 10px",
+          background: "#1e293b",
+          border: "1px solid #334155",
+          borderRadius: 8,
+          textDecoration: "none",
+        }}
+      >
+        接近
+      </Link>
+      <Link
         href="/"
         style={{
           fontSize: 11,

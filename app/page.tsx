@@ -242,6 +242,20 @@ function Header({
           更新
         </button>
         <Link
+          href="/stop"
+          style={{
+            padding: "6px 12px",
+            background: "#1e293b",
+            border: "1px solid #334155",
+            borderRadius: 6,
+            fontSize: 12,
+            color: "#cbd5e1",
+            textDecoration: "none",
+          }}
+        >
+          接近案内
+        </Link>
+        <Link
           href="/mobile"
           style={{
             padding: "6px 12px",

@@ -34,3 +34,19 @@ export function shortenPatternId(id: string | undefined): string {
   if (idx === -1) return id;
   return id.slice(idx + 1);
 }
+
+// 「あと何停留所」の表示ラベル
+export function stopsAwayLabel(n: number): string {
+  if (n <= 0) return "まもなく";
+  if (n === 1) return "あと 1 停留所";
+  return `あと ${n} 停留所`;
+}
+
+// 0時起点の秒（24時超え可）を JST の HH:MM に整形
+export function formatEtaSec(sec: number | undefined): string | null {
+  if (sec === undefined || sec === null || Number.isNaN(sec)) return null;
+  const s = ((Math.round(sec) % 86400) + 86400) % 86400;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
