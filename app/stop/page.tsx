@@ -2,11 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import {
-  classifyDelay,
-  formatEtaSec,
-  stopsAwayLabel,
-} from "../lib/format";
+import { classifyDelay, formatEtaSec } from "../lib/format";
 
 const REFRESH_MS = 20_000;
 
@@ -71,8 +67,12 @@ export default function StopPage() {
   }, [stops, query]);
 
   const selectedId = selected?.id ?? null;
+  // リクエストトークン。停留所切替や更新の重複時、古い応答が新しい表示を
+  // 上書きしないようにする（毎回インクリメントし、解決時に最新かを確認）。
+  const reqSeq = useRef(0);
   const fetchApproaches = useCallback(async () => {
     if (!selectedId) return;
+    const my = ++reqSeq.current;
     setLoading(true);
     try {
       const res = await fetch(
@@ -80,14 +80,16 @@ export default function StopPage() {
         { cache: "no-store" },
       );
       const data = await res.json();
+      if (my !== reqSeq.current) return; // 古い応答は破棄
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       setApproaches(data.approaches || []);
       setLastUpdated(new Date());
       setError(null);
     } catch (e) {
+      if (my !== reqSeq.current) return;
       setError(e instanceof Error ? e.message : "取得に失敗しました");
     } finally {
-      setLoading(false);
+      if (my === reqSeq.current) setLoading(false);
     }
   }, [selectedId]);
 
@@ -132,6 +134,20 @@ export default function StopPage() {
   const shown = dirFilter
     ? routeMatched.filter((a) => a.headsign === dirFilter)
     : routeMatched;
+
+  // 20秒更新で選択中の系統/方面がフィードから消えたら、その絞り込みを解除する
+  // （でないと「該当なし」に見えて他の接近バスが隠れてしまう）。
+  useEffect(() => {
+    if (routeFilter && !routeOptions.some((r) => r.id === routeFilter)) {
+      setRouteFilter("");
+      setDirFilter("");
+    }
+  }, [routeOptions, routeFilter]);
+  useEffect(() => {
+    if (dirFilter && !dirOptions.some((d) => d.name === dirFilter)) {
+      setDirFilter("");
+    }
+  }, [dirOptions, dirFilter]);
 
   return (
     <div style={{ minHeight: "100dvh", background: "#0f172a", color: "#f1f5f9" }}>
@@ -245,9 +261,11 @@ export default function StopPage() {
                   fontSize: 14,
                 }}
               >
-                {loading
-                  ? "接近情報を読み込み中..."
-                  : "この停留所に接近中のバスはありません"}
+                {approaches.length > 0
+                  ? "この系統・方面に一致するバスはありません"
+                  : loading
+                    ? "接近情報を読み込み中..."
+                    : "この停留所に接近中のバスはありません"}
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

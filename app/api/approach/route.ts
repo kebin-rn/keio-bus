@@ -108,7 +108,8 @@ export async function GET(req: NextRequest) {
 
       let etaSec: number | undefined;
       if (schedule) {
-        const base = schedule.get(scheduleKey(tid, stopId));
+        // 定刻はこの通過 (targetSeq) のものを引く。循環路線でも取り違えない。
+        const base = schedule.get(scheduleKey(tid, targetSeq));
         if (base !== undefined) etaSec = base + (delay ?? 0);
       }
 
