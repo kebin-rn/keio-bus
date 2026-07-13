@@ -34,9 +34,16 @@ export default function MultiSelect({
   const [open, setOpen] = useState(false);
   // overflow:hidden なページ (100dvh 固定のモバイル地図等) ではパネルが
   // 画面外にはみ出た分がクリップされ最後の選択肢に届かなくなるため、
-  // 開いたときにトリガー下の空きを測って高さを決める。
+  // 開く直前にトリガー下の空きを測って高さを決める。
   const [maxHeight, setMaxHeight] = useState(300);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // 一度でも選択肢に現れた値のラベルを覚えておく。系統のバスが全便終了して
+  // options から消えた後も、行に生 ID ではなく元の表示名を出すため。
+  const seenLabels = useRef(new Map<string, string>());
+  useEffect(() => {
+    for (const o of options) seenLabels.current.set(o.value, o.label);
+  }, [options]);
 
   const recalcHeight = useCallback(() => {
     const rect = rootRef.current?.getBoundingClientRect();
@@ -47,7 +54,6 @@ export default function MultiSelect({
 
   useEffect(() => {
     if (!open) return;
-    recalcHeight();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
@@ -78,6 +84,7 @@ export default function MultiSelect({
       ? placeholder
       : selected.length === 1
         ? (options.find((o) => o.value === selected[0])?.label ??
+          seenLabels.current.get(selected[0]) ??
           `${summaryPrefix}: 1件選択`)
         : `${summaryPrefix}: ${selected.length}件選択`;
 
@@ -100,7 +107,11 @@ export default function MultiSelect({
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          // 開く前に同期で高さを測る (開いた後だと 1 フレーム旧値で描画される)
+          if (!open) recalcHeight();
+          setOpen((o) => !o);
+        }}
         style={{
           display: "flex",
           alignItems: "center",
@@ -193,7 +204,7 @@ export default function MultiSelect({
                     color: "#94a3b8",
                   }}
                 >
-                  {v} (現在運行なし)
+                  {seenLabels.current.get(v) ?? v} (現在運行なし)
                 </span>
               </label>
             ))}
