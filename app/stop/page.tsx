@@ -7,10 +7,12 @@ import { classifyDelay, formatEtaSec } from "../lib/format";
 const REFRESH_MS = 20_000;
 
 interface StopItem {
-  id: string;
   name: string;
+  // 同名停留所の全ポール (のりば) ID。接近判定はこの全てを対象にする
+  ids: string[];
   lat?: number;
   lng?: number;
+  poleCount?: number;
 }
 
 interface Approach {
@@ -66,7 +68,8 @@ export default function StopPage() {
     return stops.filter((s) => s.name.includes(q)).slice(0, 60);
   }, [stops, query]);
 
-  const selectedId = selected?.id ?? null;
+  // 選択中の停留所の全ポール ID をカンマ区切りで API に渡す
+  const selectedId = selected ? selected.ids.join(",") : null;
   // リクエストトークン。停留所切替や更新の重複時、古い応答が新しい表示を
   // 上書きしないようにする（毎回インクリメントし、解決時に最新かを確認）。
   const reqSeq = useRef(0);
@@ -361,10 +364,13 @@ function StopSearch({
         )}
         {matches.map((s) => (
           <button
-            key={s.id}
+            key={s.name}
             onClick={() => onSelect(s)}
             style={{
-              display: "block",
+              display: "flex",
+              alignItems: "baseline",
+              justifyContent: "space-between",
+              gap: 8,
               width: "100%",
               textAlign: "left",
               padding: "12px 14px",
@@ -375,7 +381,12 @@ function StopSearch({
               fontSize: 15,
             }}
           >
-            {s.name}
+            <span>{s.name}</span>
+            {(s.poleCount ?? s.ids.length) > 1 && (
+              <span style={{ fontSize: 11, color: "#64748b", flexShrink: 0 }}>
+                のりば {s.poleCount ?? s.ids.length}
+              </span>
+            )}
           </button>
         ))}
       </div>

@@ -32,10 +32,17 @@ export interface Approach {
 }
 
 export async function GET(req: NextRequest) {
-  const stopId = req.nextUrl.searchParams.get("stop");
-  if (!stopId) {
+  // 同名停留所は複数ポール (のりば) を持つため、stop はカンマ区切りで
+  // 複数 ID を受け取る。各便はそのうち最初に到達するポールで判定する。
+  const stopParam = req.nextUrl.searchParams.get("stop");
+  if (!stopParam) {
     return NextResponse.json({ error: "stop parameter required" }, { status: 400 });
   }
+  const stopIds = stopParam.split(",").map((s) => s.trim()).filter(Boolean);
+  if (stopIds.length === 0 || stopIds.length > 50) {
+    return NextResponse.json({ error: "invalid stop parameter" }, { status: 400 });
+  }
+  const stopIdSet = new Set(stopIds);
 
   try {
     const [{ vehicles, tripUpdates }, stat, schedule] = await Promise.all([
@@ -72,16 +79,17 @@ export async function GET(req: NextRequest) {
 
       const stus = tu.stopTimeUpdate ?? [];
 
-      // これから到達する対象停留所（seq >= 現在seq）を探す
+      // これから到達する対象ポール（seq >= 現在seq）のうち最初のもの
       let targetSeq: number | undefined;
       for (const s of stus) {
         if (
-          s.stopId === stopId &&
+          s.stopId !== undefined &&
+          stopIdSet.has(s.stopId) &&
           s.stopSequence !== undefined &&
-          s.stopSequence >= curSeq
+          s.stopSequence >= curSeq &&
+          (targetSeq === undefined || s.stopSequence < targetSeq)
         ) {
           targetSeq = s.stopSequence;
-          break;
         }
       }
       if (targetSeq === undefined) continue; // この便はこの先この停留所を通らない
@@ -137,11 +145,11 @@ export async function GET(req: NextRequest) {
       return (a.etaSec ?? Infinity) - (b.etaSec ?? Infinity);
     });
 
-    const s = stat.stops[stopId];
+    const first = stopIds.map((id) => stat.stops[id]).find(Boolean);
     return NextResponse.json({
-      stop: s
-        ? { id: s.stopId, name: s.name, lat: s.lat, lng: s.lng }
-        : { id: stopId, name: stopId },
+      stop: first
+        ? { ids: stopIds, name: first.name, lat: first.lat, lng: first.lng }
+        : { ids: stopIds, name: stopIds[0] },
       approaches,
       scheduleAvailable: schedule !== null,
       fetchedAt: new Date().toISOString(),
