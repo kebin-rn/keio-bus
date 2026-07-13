@@ -129,7 +129,9 @@ export default function StopPage() {
         )
       : approaches;
 
+  // 方面は地図ページと同様、系統を 1 つ以上選んだときのみ絞り込み可能にする
   const dirOptions = useMemo(() => {
+    if (routeFilters.length === 0) return [];
     const m = new Map<string, number>();
     for (const a of routeMatched) {
       if (a.headsign) m.set(a.headsign, (m.get(a.headsign) ?? 0) + 1);
@@ -137,7 +139,7 @@ export default function StopPage() {
     return Array.from(m.entries())
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => a.name.localeCompare(b.name, "ja"));
-  }, [routeMatched]);
+  }, [routeMatched, routeFilters]);
 
   const shown = dirFilter
     ? routeMatched.filter((a) => a.headsign === dirFilter)
@@ -145,18 +147,22 @@ export default function StopPage() {
 
   // 20秒更新で選択中の系統/方面がフィードから消えたら、消えた分だけ解除する
   // （でないと「該当なし」に見えて他の接近バスが隠れてしまう）。
+  // ただし応答全体が空のとき (フィード側の一時的な不調や停留所切替直後) は
+  // ユーザーの選択を消さない。
   useEffect(() => {
+    if (approaches.length === 0) return;
     setRouteFilters((prev) => {
       if (prev.length === 0) return prev;
       const next = prev.filter((id) => routeOptions.some((r) => r.id === id));
       return next.length === prev.length ? prev : next;
     });
-  }, [routeOptions]);
+  }, [routeOptions, approaches.length]);
   useEffect(() => {
+    if (approaches.length === 0) return;
     if (dirFilter && !dirOptions.some((d) => d.name === dirFilter)) {
       setDirFilter("");
     }
-  }, [dirOptions, dirFilter]);
+  }, [dirOptions, dirFilter, approaches.length]);
 
   return (
     <div style={{ minHeight: "100dvh", background: "#0f172a", color: "#f1f5f9" }}>
@@ -171,7 +177,9 @@ export default function StopPage() {
           borderBottom: "1px solid #1e293b",
           position: "sticky",
           top: 0,
-          zIndex: 10,
+          // MultiSelect のパネル (zIndex 60) より上に。スクロール中に
+          // 開いたままのドロップダウンがヘッダーへ重なって描画されるのを防ぐ
+          zIndex: 100,
         }}
       >
         <div>

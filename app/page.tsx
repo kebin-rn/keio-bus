@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { APIProvider } from "@vis.gl/react-google-maps";
 import BusMap from "./components/BusMap";
@@ -85,6 +85,17 @@ export default function Page() {
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => a.name.localeCompare(b.name, "ja"));
   }, [routedBuses, routeFilters]);
+
+  // 30秒更新で選択中の方面のバスが全て終了したら絞り込みを解除する
+  // （でないと select は空表示のまま、見えないフィルタで 0 台になる）。
+  useEffect(() => {
+    if (
+      directionFilter &&
+      !directionOptions.some((d) => d.name === directionFilter)
+    ) {
+      setDirectionFilter("");
+    }
+  }, [directionOptions, directionFilter]);
 
   const directedBuses = directionFilter
     ? routedBuses.filter((b) => b.tripHeadsign === directionFilter)

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface MultiSelectOption {
   value: string;
@@ -32,27 +32,32 @@ export default function MultiSelect({
   buttonStyle?: React.CSSProperties;
 }) {
   const [open, setOpen] = useState(false);
+  // overflow:hidden なページ (100dvh 固定のモバイル地図等) ではパネルが
+  // 画面外にはみ出た分がクリップされ最後の選択肢に届かなくなるため、
+  // 開いたときにトリガー下の空きを測って高さを決める。
+  const [maxHeight, setMaxHeight] = useState(300);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  const recalcHeight = useCallback(() => {
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const available = window.innerHeight - rect.bottom - 16;
+    setMaxHeight(Math.max(140, Math.min(300, available)));
+  }, []);
 
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent | TouchEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
+    recalcHeight();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("touchstart", onDown);
+    window.addEventListener("resize", recalcHeight);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("touchstart", onDown);
+      window.removeEventListener("resize", recalcHeight);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, recalcHeight]);
 
   const toggle = (v: string) => {
     onChange(
@@ -62,6 +67,12 @@ export default function MultiSelect({
     );
   };
 
+  // 選択中だが現在の選択肢に無い値 (該当系統のバスが一時的に全便終了した等)。
+  // 行として出さないと「解除できない見えないフィルタ」になるため明示する。
+  const staleSelected = selected.filter(
+    (v) => !options.some((o) => o.value === v),
+  );
+
   const summary =
     selected.length === 0
       ? placeholder
@@ -69,6 +80,18 @@ export default function MultiSelect({
         ? (options.find((o) => o.value === selected[0])?.label ??
           `${summaryPrefix}: 1件選択`)
         : `${summaryPrefix}: ${selected.length}件選択`;
+
+  const rowStyle = (checked: boolean): React.CSSProperties => ({
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "8px 10px",
+    fontSize: 13,
+    color: "#f1f5f9",
+    cursor: "pointer",
+    borderRadius: 6,
+    background: checked ? "#1e293b" : "transparent",
+  });
 
   return (
     <div ref={rootRef} style={{ position: "relative", ...containerStyle }}>
@@ -109,70 +132,57 @@ export default function MultiSelect({
       </button>
 
       {open && (
-        <div
-          role="listbox"
-          aria-label={ariaLabel}
-          aria-multiselectable="true"
-          style={{
-            position: "absolute",
-            top: "calc(100% + 4px)",
-            ...(align === "right" ? { right: 0 } : { left: 0 }),
-            minWidth: "100%",
-            width: "max-content",
-            maxWidth: "min(320px, 86vw)",
-            maxHeight: 300,
-            overflowY: "auto",
-            background: "#0f172a",
-            border: "1px solid #334155",
-            borderRadius: 8,
-            boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
-            zIndex: 60,
-            padding: 4,
-          }}
-        >
-          {selected.length > 0 && (
-            <button
-              type="button"
-              onClick={() => onChange([])}
-              style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left",
-                padding: "8px 10px",
-                color: "#7dd3fc",
-                fontSize: 12,
-                borderRadius: 6,
-              }}
-            >
-              ✕ すべて解除
-            </button>
-          )}
-          {options.length === 0 && (
-            <div style={{ padding: "10px 12px", fontSize: 12, color: "#64748b" }}>
-              選択肢がありません
-            </div>
-          )}
-          {options.map((o) => {
-            const checked = selected.includes(o.value);
-            return (
-              <label
-                key={o.value}
+        <>
+          {/* 透明バックドロップ: パネル外タップを吸収して閉じる。
+              これが無いと閉じるためのタップが下の地図やボタンに貫通する */}
+          <div
+            onClick={() => setOpen(false)}
+            style={{ position: "fixed", inset: 0, zIndex: 55 }}
+          />
+          <div
+            role="listbox"
+            aria-label={ariaLabel}
+            aria-multiselectable="true"
+            style={{
+              position: "absolute",
+              top: "calc(100% + 4px)",
+              ...(align === "right" ? { right: 0 } : { left: 0 }),
+              minWidth: "100%",
+              width: "max-content",
+              maxWidth: "min(320px, 86vw)",
+              maxHeight,
+              overflowY: "auto",
+              background: "#0f172a",
+              border: "1px solid #334155",
+              borderRadius: 8,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+              zIndex: 60,
+              padding: 4,
+            }}
+          >
+            {selected.length > 0 && (
+              <button
+                type="button"
+                onClick={() => onChange([])}
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
                   padding: "8px 10px",
-                  fontSize: 13,
-                  color: "#f1f5f9",
-                  cursor: "pointer",
+                  color: "#7dd3fc",
+                  fontSize: 12,
                   borderRadius: 6,
-                  background: checked ? "#1e293b" : "transparent",
                 }}
               >
+                ✕ すべて解除
+              </button>
+            )}
+            {staleSelected.map((v) => (
+              <label key={`stale-${v}`} style={rowStyle(true)}>
                 <input
                   type="checkbox"
-                  checked={checked}
-                  onChange={() => toggle(o.value)}
+                  checked
+                  onChange={() => toggle(v)}
                   style={{ accentColor: "#0ea5e9", flexShrink: 0 }}
                 />
                 <span
@@ -180,14 +190,44 @@ export default function MultiSelect({
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
+                    color: "#94a3b8",
                   }}
                 >
-                  {o.label}
+                  {v} (現在運行なし)
                 </span>
               </label>
-            );
-          })}
-        </div>
+            ))}
+            {options.length === 0 && staleSelected.length === 0 && (
+              <div
+                style={{ padding: "10px 12px", fontSize: 12, color: "#64748b" }}
+              >
+                選択肢がありません
+              </div>
+            )}
+            {options.map((o) => {
+              const checked = selected.includes(o.value);
+              return (
+                <label key={o.value} style={rowStyle(checked)}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggle(o.value)}
+                    style={{ accentColor: "#0ea5e9", flexShrink: 0 }}
+                  />
+                  <span
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {o.label}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </>
       )}
     </div>
   );
