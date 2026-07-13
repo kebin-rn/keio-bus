@@ -5,6 +5,7 @@ import Link from "next/link";
 import { APIProvider } from "@vis.gl/react-google-maps";
 import BusMap from "./components/BusMap";
 import BusInfoPanel from "./components/BusInfoPanel";
+import MultiSelect from "./components/MultiSelect";
 import { useBusData } from "./hooks/useBusData";
 import { shortenPatternId } from "./lib/format";
 
@@ -25,7 +26,8 @@ export default function Page() {
 
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [officeFilter, setOfficeFilter] = useState("");
-  const [routeFilter, setRouteFilter] = useState("");
+  // 系統は複数選択可 (空配列 = すべて)
+  const [routeFilters, setRouteFilters] = useState<string[]>([]);
   const [directionFilter, setDirectionFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -33,9 +35,13 @@ export default function Page() {
     ? buses.filter((b) => b.officeId === officeFilter)
     : buses;
 
-  const routedBuses = routeFilter
-    ? officeBuses.filter((b) => b["odpt:busroutePattern"] === routeFilter)
-    : officeBuses;
+  const routedBuses =
+    routeFilters.length > 0
+      ? officeBuses.filter((b) => {
+          const pid = b["odpt:busroutePattern"];
+          return pid ? routeFilters.includes(pid) : false;
+        })
+      : officeBuses;
 
   const officeOptions = useMemo(() => {
     const counts: Record<string, { name: string; count: number }> = {};
@@ -67,9 +73,9 @@ export default function Page() {
       .sort((a, b) => a.title.localeCompare(b.title, "ja"));
   }, [officeBuses, patternMap]);
 
-  // 系統選択時のみ方面オプションを構築 (= 当該系統の trip_headsign の集合)
+  // 系統選択時のみ方面オプションを構築 (= 選択中系統の trip_headsign の集合)
   const directionOptions = useMemo(() => {
-    if (!routeFilter) return [];
+    if (routeFilters.length === 0) return [];
     const counts = new Map<string, number>();
     for (const b of routedBuses) {
       const h = b.tripHeadsign;
@@ -78,7 +84,7 @@ export default function Page() {
     return Array.from(counts.entries())
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => a.name.localeCompare(b.name, "ja"));
-  }, [routedBuses, routeFilter]);
+  }, [routedBuses, routeFilters]);
 
   const directedBuses = directionFilter
     ? routedBuses.filter((b) => b.tripHeadsign === directionFilter)
@@ -112,7 +118,7 @@ export default function Page() {
           allCount={buses.length}
           officeCount={officeBuses.length}
           officeFilter={officeFilter}
-          routeFilter={routeFilter}
+          routeFilters={routeFilters}
           directionFilter={directionFilter}
           searchQuery={searchQuery}
           officeOptions={officeOptions}
@@ -120,12 +126,12 @@ export default function Page() {
           directionOptions={directionOptions}
           onChangeOffice={(v) => {
             setOfficeFilter(v);
-            setRouteFilter("");
+            setRouteFilters([]);
             setDirectionFilter("");
             setSelectedBusId(null);
           }}
-          onChangeRoute={(v) => {
-            setRouteFilter(v);
+          onChangeRoutes={(v) => {
+            setRouteFilters(v);
             setDirectionFilter("");
             setSelectedBusId(null);
           }}
@@ -278,32 +284,32 @@ function FilterToolbar({
   allCount,
   officeCount,
   officeFilter,
-  routeFilter,
+  routeFilters,
   directionFilter,
   searchQuery,
   officeOptions,
   routeOptions,
   directionOptions,
   onChangeOffice,
-  onChangeRoute,
+  onChangeRoutes,
   onChangeDirection,
   onChangeSearch,
 }: {
   allCount: number;
   officeCount: number;
   officeFilter: string;
-  routeFilter: string;
+  routeFilters: string[];
   directionFilter: string;
   searchQuery: string;
   officeOptions: { id: string; name: string; count: number }[];
   routeOptions: { id: string; title: string; count: number }[];
   directionOptions: { name: string; count: number }[];
   onChangeOffice: (v: string) => void;
-  onChangeRoute: (v: string) => void;
+  onChangeRoutes: (v: string[]) => void;
   onChangeDirection: (v: string) => void;
   onChangeSearch: (v: string) => void;
 }) {
-  const showDirection = !!routeFilter && directionOptions.length > 0;
+  const showDirection = routeFilters.length > 0 && directionOptions.length > 0;
   return (
     <div
       style={{
@@ -370,15 +376,17 @@ function FilterToolbar({
           label: `${o.name} (${o.count})`,
         }))}
       />
-      <ToolbarSelect
-        ariaLabel="系統"
-        value={routeFilter}
-        onChange={onChangeRoute}
+      <MultiSelect
+        ariaLabel="系統 (複数選択可)"
+        summaryPrefix="系統"
         placeholder={`系統: すべて (${officeCount}台)`}
+        selected={routeFilters}
+        onChange={onChangeRoutes}
         options={routeOptions.map((r) => ({
           value: r.id,
           label: `${r.title} (${r.count})`,
         }))}
+        containerStyle={{ flex: "0 1 220px", minWidth: 160, maxWidth: 260 }}
       />
       {showDirection && (
         <ToolbarSelect

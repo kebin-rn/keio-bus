@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { APIProvider } from "@vis.gl/react-google-maps";
 import Link from "next/link";
 import BusMap from "../components/BusMap";
+import MultiSelect from "../components/MultiSelect";
 import { useBusData } from "../hooks/useBusData";
 import {
   classifyDelay,
@@ -29,7 +30,8 @@ export default function MobilePage() {
 
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [officeFilter, setOfficeFilter] = useState("");
-  const [routeFilter, setRouteFilter] = useState("");
+  // 系統は複数選択可 (空配列 = すべて)
+  const [routeFilters, setRouteFilters] = useState<string[]>([]);
   const [directionFilter, setDirectionFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -37,9 +39,13 @@ export default function MobilePage() {
   const officeBuses = officeFilter
     ? buses.filter((b) => b.officeId === officeFilter)
     : buses;
-  const routedBuses = routeFilter
-    ? officeBuses.filter((b) => b["odpt:busroutePattern"] === routeFilter)
-    : officeBuses;
+  const routedBuses =
+    routeFilters.length > 0
+      ? officeBuses.filter((b) => {
+          const pid = b["odpt:busroutePattern"];
+          return pid ? routeFilters.includes(pid) : false;
+        })
+      : officeBuses;
   const directedBuses = directionFilter
     ? routedBuses.filter((b) => b.tripHeadsign === directionFilter)
     : routedBuses;
@@ -81,7 +87,7 @@ export default function MobilePage() {
   }, [officeBuses, patternMap]);
 
   const directionOptions = useMemo(() => {
-    if (!routeFilter) return [];
+    if (routeFilters.length === 0) return [];
     const counts = new Map<string, number>();
     for (const b of routedBuses) {
       const h = b.tripHeadsign;
@@ -90,7 +96,7 @@ export default function MobilePage() {
     return Array.from(counts.entries())
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => a.name.localeCompare(b.name, "ja"));
-  }, [routedBuses, routeFilter]);
+  }, [routedBuses, routeFilters]);
 
   const selectedBus = useMemo(
     () => buses.find((b) => b["@id"] === selectedBusId) ?? null,
@@ -115,7 +121,7 @@ export default function MobilePage() {
       />
       <FilterBar
         officeFilter={officeFilter}
-        routeFilter={routeFilter}
+        routeFilters={routeFilters}
         directionFilter={directionFilter}
         searchQuery={searchQuery}
         officeOptions={officeOptions}
@@ -125,12 +131,12 @@ export default function MobilePage() {
         filteredCount={officeBuses.length}
         onChangeOffice={(v) => {
           setOfficeFilter(v);
-          setRouteFilter("");
+          setRouteFilters([]);
           setDirectionFilter("");
           setSelectedBusId(null);
         }}
-        onChangeRoute={(v) => {
-          setRouteFilter(v);
+        onChangeRoutes={(v) => {
+          setRouteFilters(v);
           setDirectionFilter("");
           setSelectedBusId(null);
         }}
@@ -290,7 +296,7 @@ function MobileHeader({
 
 function FilterBar({
   officeFilter,
-  routeFilter,
+  routeFilters,
   directionFilter,
   searchQuery,
   officeOptions,
@@ -299,12 +305,12 @@ function FilterBar({
   allCount,
   filteredCount,
   onChangeOffice,
-  onChangeRoute,
+  onChangeRoutes,
   onChangeDirection,
   onChangeSearch,
 }: {
   officeFilter: string;
-  routeFilter: string;
+  routeFilters: string[];
   directionFilter: string;
   searchQuery: string;
   officeOptions: { id: string; name: string; count: number }[];
@@ -313,11 +319,11 @@ function FilterBar({
   allCount: number;
   filteredCount: number;
   onChangeOffice: (v: string) => void;
-  onChangeRoute: (v: string) => void;
+  onChangeRoutes: (v: string[]) => void;
   onChangeDirection: (v: string) => void;
   onChangeSearch: (v: string) => void;
 }) {
-  const showDirection = routeFilter && directionOptions.length > 0;
+  const showDirection = routeFilters.length > 0 && directionOptions.length > 0;
   return (
     <div
       style={{
@@ -384,19 +390,19 @@ function FilterBar({
             </option>
           ))}
         </select>
-        <select
-          value={routeFilter}
-          onChange={(e) => onChangeRoute(e.target.value)}
-          style={selectStyle}
-          aria-label="系統"
-        >
-          <option value="">系統: 全{filteredCount}台</option>
-          {routeOptions.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.title} ({r.count})
-            </option>
-          ))}
-        </select>
+        <MultiSelect
+          ariaLabel="系統 (複数選択可)"
+          summaryPrefix="系統"
+          placeholder={`系統: 全${filteredCount}台`}
+          selected={routeFilters}
+          onChange={onChangeRoutes}
+          align="right"
+          options={routeOptions.map((r) => ({
+            value: r.id,
+            label: `${r.title} (${r.count})`,
+          }))}
+          buttonStyle={{ height: 42, borderRadius: 8 }}
+        />
       </div>
       {showDirection && (
         <select

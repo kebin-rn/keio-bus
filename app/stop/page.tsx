@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import MultiSelect from "../components/MultiSelect";
 import { classifyDelay, formatEtaSec } from "../lib/format";
 
 const REFRESH_MS = 20_000;
@@ -38,7 +39,8 @@ export default function StopPage() {
   const [selected, setSelected] = useState<StopItem | null>(null);
 
   const [approaches, setApproaches] = useState<Approach[]>([]);
-  const [routeFilter, setRouteFilter] = useState("");
+  // 系統は複数選択可 (空配列 = すべて)
+  const [routeFilters, setRouteFilters] = useState<string[]>([]);
   const [dirFilter, setDirFilter] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [loading, setLoading] = useState(false);
@@ -99,7 +101,7 @@ export default function StopPage() {
   useEffect(() => {
     if (!selectedId) return;
     setApproaches([]);
-    setRouteFilter("");
+    setRouteFilters([]);
     setDirFilter("");
     fetchApproaches();
     const id = setInterval(fetchApproaches, REFRESH_MS);
@@ -120,9 +122,12 @@ export default function StopPage() {
       .sort((a, b) => a.title.localeCompare(b.title, "ja"));
   }, [approaches]);
 
-  const routeMatched = routeFilter
-    ? approaches.filter((a) => (a.routeId ?? a.routeTitle ?? "") === routeFilter)
-    : approaches;
+  const routeMatched =
+    routeFilters.length > 0
+      ? approaches.filter((a) =>
+          routeFilters.includes(a.routeId ?? a.routeTitle ?? ""),
+        )
+      : approaches;
 
   const dirOptions = useMemo(() => {
     const m = new Map<string, number>();
@@ -138,14 +143,15 @@ export default function StopPage() {
     ? routeMatched.filter((a) => a.headsign === dirFilter)
     : routeMatched;
 
-  // 20秒更新で選択中の系統/方面がフィードから消えたら、その絞り込みを解除する
+  // 20秒更新で選択中の系統/方面がフィードから消えたら、消えた分だけ解除する
   // （でないと「該当なし」に見えて他の接近バスが隠れてしまう）。
   useEffect(() => {
-    if (routeFilter && !routeOptions.some((r) => r.id === routeFilter)) {
-      setRouteFilter("");
-      setDirFilter("");
-    }
-  }, [routeOptions, routeFilter]);
+    setRouteFilters((prev) => {
+      if (prev.length === 0) return prev;
+      const next = prev.filter((id) => routeOptions.some((r) => r.id === id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [routeOptions]);
   useEffect(() => {
     if (dirFilter && !dirOptions.some((d) => d.name === dirFilter)) {
       setDirFilter("");
@@ -212,18 +218,20 @@ export default function StopPage() {
                   margin: "12px 0",
                 }}
               >
-                <FilterSelect
-                  ariaLabel="系統"
-                  value={routeFilter}
+                <MultiSelect
+                  ariaLabel="系統 (複数選択可)"
+                  summaryPrefix="系統"
+                  placeholder={`系統: すべて (${approaches.length})`}
+                  selected={routeFilters}
                   onChange={(v) => {
-                    setRouteFilter(v);
+                    setRouteFilters(v);
                     setDirFilter("");
                   }}
-                  placeholder={`系統: すべて (${approaches.length})`}
                   options={routeOptions.map((r) => ({
                     value: r.id,
                     label: `${r.title} (${r.count})`,
                   }))}
+                  buttonStyle={{ height: 38, borderRadius: 8 }}
                 />
                 {dirOptions.length > 0 && (
                   <FilterSelect
