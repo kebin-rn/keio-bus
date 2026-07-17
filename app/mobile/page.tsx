@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { APIProvider } from "@vis.gl/react-google-maps";
 import Link from "next/link";
 import BusMap from "../components/BusMap";
@@ -30,9 +30,9 @@ export default function MobilePage() {
 
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [officeFilter, setOfficeFilter] = useState("");
-  // 系統は複数選択可 (空配列 = すべて)
+  // 系統・方面は複数選択可 (空配列 = すべて)
   const [routeFilters, setRouteFilters] = useState<string[]>([]);
-  const [directionFilter, setDirectionFilter] = useState("");
+  const [directionFilters, setDirectionFilters] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
 
@@ -46,9 +46,12 @@ export default function MobilePage() {
           return pid ? routeFilters.includes(pid) : false;
         })
       : officeBuses;
-  const directedBuses = directionFilter
-    ? routedBuses.filter((b) => b.tripHeadsign === directionFilter)
-    : routedBuses;
+  const directedBuses =
+    directionFilters.length > 0
+      ? routedBuses.filter(
+          (b) => b.tripHeadsign && directionFilters.includes(b.tripHeadsign),
+        )
+      : routedBuses;
   const q = searchQuery.trim().toLowerCase();
   const displayedBuses = q
     ? directedBuses.filter((b) =>
@@ -98,15 +101,8 @@ export default function MobilePage() {
       .sort((a, b) => a.name.localeCompare(b.name, "ja"));
   }, [routedBuses, routeFilters]);
 
-  // 30秒更新で選択中の方面のバスが全て終了したら絞り込みを解除する
-  useEffect(() => {
-    if (
-      directionFilter &&
-      !directionOptions.some((d) => d.name === directionFilter)
-    ) {
-      setDirectionFilter("");
-    }
-  }, [directionOptions, directionFilter]);
+  // 方面がフィードから消えても自動解除はしない。MultiSelect が消えた選択を
+  // 「(現在運行なし)」の行として表示し、個別に解除できるため (系統と同じ扱い)。
 
   const selectedBus = useMemo(
     () => buses.find((b) => b["@id"] === selectedBusId) ?? null,
@@ -132,7 +128,7 @@ export default function MobilePage() {
       <FilterBar
         officeFilter={officeFilter}
         routeFilters={routeFilters}
-        directionFilter={directionFilter}
+        directionFilters={directionFilters}
         searchQuery={searchQuery}
         officeOptions={officeOptions}
         routeOptions={routeOptions}
@@ -142,16 +138,16 @@ export default function MobilePage() {
         onChangeOffice={(v) => {
           setOfficeFilter(v);
           setRouteFilters([]);
-          setDirectionFilter("");
+          setDirectionFilters([]);
           setSelectedBusId(null);
         }}
         onChangeRoutes={(v) => {
           setRouteFilters(v);
-          setDirectionFilter("");
+          setDirectionFilters([]);
           setSelectedBusId(null);
         }}
-        onChangeDirection={(v) => {
-          setDirectionFilter(v);
+        onChangeDirections={(v) => {
+          setDirectionFilters(v);
           setSelectedBusId(null);
         }}
         onChangeSearch={setSearchQuery}
@@ -307,7 +303,7 @@ function MobileHeader({
 function FilterBar({
   officeFilter,
   routeFilters,
-  directionFilter,
+  directionFilters,
   searchQuery,
   officeOptions,
   routeOptions,
@@ -316,12 +312,12 @@ function FilterBar({
   filteredCount,
   onChangeOffice,
   onChangeRoutes,
-  onChangeDirection,
+  onChangeDirections,
   onChangeSearch,
 }: {
   officeFilter: string;
   routeFilters: string[];
-  directionFilter: string;
+  directionFilters: string[];
   searchQuery: string;
   officeOptions: { id: string; name: string; count: number }[];
   routeOptions: { id: string; title: string; count: number }[];
@@ -330,10 +326,13 @@ function FilterBar({
   filteredCount: number;
   onChangeOffice: (v: string) => void;
   onChangeRoutes: (v: string[]) => void;
-  onChangeDirection: (v: string) => void;
+  onChangeDirections: (v: string[]) => void;
   onChangeSearch: (v: string) => void;
 }) {
-  const showDirection = routeFilters.length > 0 && directionOptions.length > 0;
+  // 選択済みの方面が残っている間は選択肢が空でもコントロールを出し続ける
+  const showDirection =
+    routeFilters.length > 0 &&
+    (directionOptions.length > 0 || directionFilters.length > 0);
   return (
     <div
       style={{
@@ -415,19 +414,18 @@ function FilterBar({
         />
       </div>
       {showDirection && (
-        <select
-          value={directionFilter}
-          onChange={(e) => onChangeDirection(e.target.value)}
-          style={selectStyle}
-          aria-label="方面"
-        >
-          <option value="">方面: すべて</option>
-          {directionOptions.map((d) => (
-            <option key={d.name} value={d.name}>
-              {d.name} 行 ({d.count})
-            </option>
-          ))}
-        </select>
+        <MultiSelect
+          ariaLabel="方面 (複数選択可)"
+          summaryPrefix="方面"
+          placeholder="方面: すべて"
+          selected={directionFilters}
+          onChange={onChangeDirections}
+          options={directionOptions.map((d) => ({
+            value: d.name,
+            label: `${d.name} 行 (${d.count})`,
+          }))}
+          buttonStyle={{ height: 42, borderRadius: 8 }}
+        />
       )}
     </div>
   );

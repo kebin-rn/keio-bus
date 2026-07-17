@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { APIProvider } from "@vis.gl/react-google-maps";
 import BusMap from "./components/BusMap";
@@ -26,9 +26,9 @@ export default function Page() {
 
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
   const [officeFilter, setOfficeFilter] = useState("");
-  // 系統は複数選択可 (空配列 = すべて)
+  // 系統・方面は複数選択可 (空配列 = すべて)
   const [routeFilters, setRouteFilters] = useState<string[]>([]);
-  const [directionFilter, setDirectionFilter] = useState("");
+  const [directionFilters, setDirectionFilters] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
 
   const officeBuses = officeFilter
@@ -86,20 +86,14 @@ export default function Page() {
       .sort((a, b) => a.name.localeCompare(b.name, "ja"));
   }, [routedBuses, routeFilters]);
 
-  // 30秒更新で選択中の方面のバスが全て終了したら絞り込みを解除する
-  // （でないと select は空表示のまま、見えないフィルタで 0 台になる）。
-  useEffect(() => {
-    if (
-      directionFilter &&
-      !directionOptions.some((d) => d.name === directionFilter)
-    ) {
-      setDirectionFilter("");
-    }
-  }, [directionOptions, directionFilter]);
-
-  const directedBuses = directionFilter
-    ? routedBuses.filter((b) => b.tripHeadsign === directionFilter)
-    : routedBuses;
+  // 方面がフィードから消えても自動解除はしない。MultiSelect が消えた選択を
+  // 「(現在運行なし)」の行として表示し、個別に解除できるため (系統と同じ扱い)。
+  const directedBuses =
+    directionFilters.length > 0
+      ? routedBuses.filter(
+          (b) => b.tripHeadsign && directionFilters.includes(b.tripHeadsign),
+        )
+      : routedBuses;
 
   const q = searchQuery.trim().toLowerCase();
   const displayedBuses = q
@@ -130,7 +124,7 @@ export default function Page() {
           officeCount={officeBuses.length}
           officeFilter={officeFilter}
           routeFilters={routeFilters}
-          directionFilter={directionFilter}
+          directionFilters={directionFilters}
           searchQuery={searchQuery}
           officeOptions={officeOptions}
           routeOptions={routeOptions}
@@ -138,16 +132,16 @@ export default function Page() {
           onChangeOffice={(v) => {
             setOfficeFilter(v);
             setRouteFilters([]);
-            setDirectionFilter("");
+            setDirectionFilters([]);
             setSelectedBusId(null);
           }}
           onChangeRoutes={(v) => {
             setRouteFilters(v);
-            setDirectionFilter("");
+            setDirectionFilters([]);
             setSelectedBusId(null);
           }}
-          onChangeDirection={(v) => {
-            setDirectionFilter(v);
+          onChangeDirections={(v) => {
+            setDirectionFilters(v);
             setSelectedBusId(null);
           }}
           onChangeSearch={setSearchQuery}
@@ -296,31 +290,35 @@ function FilterToolbar({
   officeCount,
   officeFilter,
   routeFilters,
-  directionFilter,
+  directionFilters,
   searchQuery,
   officeOptions,
   routeOptions,
   directionOptions,
   onChangeOffice,
   onChangeRoutes,
-  onChangeDirection,
+  onChangeDirections,
   onChangeSearch,
 }: {
   allCount: number;
   officeCount: number;
   officeFilter: string;
   routeFilters: string[];
-  directionFilter: string;
+  directionFilters: string[];
   searchQuery: string;
   officeOptions: { id: string; name: string; count: number }[];
   routeOptions: { id: string; title: string; count: number }[];
   directionOptions: { name: string; count: number }[];
   onChangeOffice: (v: string) => void;
   onChangeRoutes: (v: string[]) => void;
-  onChangeDirection: (v: string) => void;
+  onChangeDirections: (v: string[]) => void;
   onChangeSearch: (v: string) => void;
 }) {
-  const showDirection = routeFilters.length > 0 && directionOptions.length > 0;
+  // 選択済みの方面が残っている間は選択肢が空でもコントロールを出し続ける
+  // (見えないフィルタ化を防ぐ)
+  const showDirection =
+    routeFilters.length > 0 &&
+    (directionOptions.length > 0 || directionFilters.length > 0);
   return (
     <div
       style={{
@@ -400,15 +398,17 @@ function FilterToolbar({
         containerStyle={{ flex: "0 1 220px", minWidth: 160, maxWidth: 260 }}
       />
       {showDirection && (
-        <ToolbarSelect
-          ariaLabel="方面"
-          value={directionFilter}
-          onChange={onChangeDirection}
+        <MultiSelect
+          ariaLabel="方面 (複数選択可)"
+          summaryPrefix="方面"
           placeholder="方面: すべて"
+          selected={directionFilters}
+          onChange={onChangeDirections}
           options={directionOptions.map((d) => ({
             value: d.name,
             label: `${d.name} 行 (${d.count})`,
           }))}
+          containerStyle={{ flex: "0 1 220px", minWidth: 160, maxWidth: 260 }}
         />
       )}
     </div>

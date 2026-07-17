@@ -39,9 +39,9 @@ export default function StopPage() {
   const [selected, setSelected] = useState<StopItem | null>(null);
 
   const [approaches, setApproaches] = useState<Approach[]>([]);
-  // 系統は複数選択可 (空配列 = すべて)
+  // 系統・方面は複数選択可 (空配列 = すべて)
   const [routeFilters, setRouteFilters] = useState<string[]>([]);
-  const [dirFilter, setDirFilter] = useState("");
+  const [dirFilters, setDirFilters] = useState<string[]>([]);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -102,7 +102,7 @@ export default function StopPage() {
     if (!selectedId) return;
     setApproaches([]);
     setRouteFilters([]);
-    setDirFilter("");
+    setDirFilters([]);
     fetchApproaches();
     const id = setInterval(fetchApproaches, REFRESH_MS);
     return () => clearInterval(id);
@@ -141,9 +141,12 @@ export default function StopPage() {
       .sort((a, b) => a.name.localeCompare(b.name, "ja"));
   }, [routeMatched, routeFilters]);
 
-  const shown = dirFilter
-    ? routeMatched.filter((a) => a.headsign === dirFilter)
-    : routeMatched;
+  const shown =
+    dirFilters.length > 0
+      ? routeMatched.filter(
+          (a) => a.headsign && dirFilters.includes(a.headsign),
+        )
+      : routeMatched;
 
   // 20秒更新で選択中の系統/方面がフィードから消えたら、消えた分だけ解除する
   // （でないと「該当なし」に見えて他の接近バスが隠れてしまう）。
@@ -159,10 +162,14 @@ export default function StopPage() {
   }, [routeOptions, approaches.length]);
   useEffect(() => {
     if (approaches.length === 0) return;
-    if (dirFilter && !dirOptions.some((d) => d.name === dirFilter)) {
-      setDirFilter("");
-    }
-  }, [dirOptions, dirFilter, approaches.length]);
+    setDirFilters((prev) => {
+      if (prev.length === 0) return prev;
+      const next = prev.filter((name) =>
+        dirOptions.some((d) => d.name === name),
+      );
+      return next.length === prev.length ? prev : next;
+    });
+  }, [dirOptions, approaches.length]);
 
   return (
     <div style={{ minHeight: "100dvh", background: "#0f172a", color: "#f1f5f9" }}>
@@ -221,7 +228,10 @@ export default function StopPage() {
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: dirOptions.length > 0 ? "1fr 1fr" : "1fr",
+                  gridTemplateColumns:
+                    dirOptions.length > 0 || dirFilters.length > 0
+                      ? "1fr 1fr"
+                      : "1fr",
                   gap: 8,
                   margin: "12px 0",
                 }}
@@ -233,7 +243,7 @@ export default function StopPage() {
                   selected={routeFilters}
                   onChange={(v) => {
                     setRouteFilters(v);
-                    setDirFilter("");
+                    setDirFilters([]);
                   }}
                   options={routeOptions.map((r) => ({
                     value: r.id,
@@ -241,16 +251,19 @@ export default function StopPage() {
                   }))}
                   buttonStyle={{ height: 38, borderRadius: 8 }}
                 />
-                {dirOptions.length > 0 && (
-                  <FilterSelect
-                    ariaLabel="方面"
-                    value={dirFilter}
-                    onChange={setDirFilter}
+                {(dirOptions.length > 0 || dirFilters.length > 0) && (
+                  <MultiSelect
+                    ariaLabel="方面 (複数選択可)"
+                    summaryPrefix="方面"
                     placeholder="方面: すべて"
+                    selected={dirFilters}
+                    onChange={setDirFilters}
+                    align="right"
                     options={dirOptions.map((d) => ({
                       value: d.name,
                       label: `${d.name} 行 (${d.count})`,
                     }))}
+                    buttonStyle={{ height: 38, borderRadius: 8 }}
                   />
                 )}
               </div>
@@ -491,45 +504,6 @@ function SelectedStopBar({
         </button>
       </div>
     </div>
-  );
-}
-
-function FilterSelect({
-  ariaLabel,
-  value,
-  onChange,
-  placeholder,
-  options,
-}: {
-  ariaLabel: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder: string;
-  options: { value: string; label: string }[];
-}) {
-  return (
-    <select
-      aria-label={ariaLabel}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      style={{
-        width: "100%",
-        height: 38,
-        padding: "0 8px",
-        background: "#1e293b",
-        color: "#f1f5f9",
-        border: "1px solid #334155",
-        borderRadius: 8,
-        fontSize: 13,
-      }}
-    >
-      <option value="">{placeholder}</option>
-      {options.map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
   );
 }
 
