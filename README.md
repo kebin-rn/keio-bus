@@ -43,7 +43,11 @@ cp .env.local.example .env.local
 ODPT_CONSUMER_KEY=...                    # サーバー側でのみ使用
 NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=...      # ブラウザに公開される
 NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID=...       # Advanced Marker 用 Map ID
-NEXT_PUBLIC_KEIO_BUS_OPERATORS=odpt.Operator:KeioBus
+
+# 任意: ハチ公バス (春の小川ルート) の専用車両の車番。
+# ODPT に系統情報が無いため、車番一致で「ハチ公バス 春の小川ルート」と表示する。
+# カンマ区切りの 5 桁半角数字 (サーバー側でのみ使用)
+HACHIKO_BUS_VEHICLE_NUMBERS=12345,23456
 ```
 
 ### 3. 依存パッケージのインストール

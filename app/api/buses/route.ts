@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { buildTripInfo, fetchKeioBusFeeds } from "@/app/lib/gtfsrt";
 import { getCachedStaticGtfs, getStaticGtfs } from "@/app/lib/staticGtfs";
+import {
+  getHachikoVehicleNumbers,
+  HACHIKO_OFFICE_NAME,
+  HACHIKO_ROUTE_ID,
+  HACHIKO_ROUTE_TITLE,
+} from "@/app/lib/hachiko";
 import type {
   OdptBus,
   OdptBusroutePattern,
@@ -21,6 +27,15 @@ export async function GET() {
     const { error: staticError } = getCachedStaticGtfs();
 
     const tripInfo = buildTripInfo(tripUpdates);
+    const hachikoNumbers = getHachikoVehicleNumbers();
+    // ハチ公バスは中野営業所の受託。officeId は版によって変わり得るため
+    // ID 直書きではなく営業所名から引く
+    const hachikoOfficeId = stat
+      ? Object.values(stat.offices).find(
+          (o) => o.name === HACHIKO_OFFICE_NAME,
+        )?.officeId
+      : undefined;
+    let hachikoActive = false;
 
     const buses: OdptBus[] = [];
     const usedRouteIds = new Set<string>();
@@ -39,13 +54,23 @@ export async function GET() {
       const staticTrip =
         stat && tripId !== undefined ? stat.trips[tripId] : undefined;
 
-      const routeId =
-        v.trip?.routeId || rtTrip?.routeId || staticTrip?.routeId || undefined;
-      const nextStopId =
-        v.stopId || rtTrip?.nextStopId || undefined;
-      const officeId = staticTrip?.officeId;
+      const vehicleNumber = v.vehicle?.label || v.vehicle?.id || undefined;
+      // ハチ公バスの系統情報は ODPT に無いため、車番一致で系統を差し替える
+      const isHachiko =
+        vehicleNumber !== undefined && hachikoNumbers.has(vehicleNumber);
 
-      if (routeId) usedRouteIds.add(routeId);
+      const routeId = isHachiko
+        ? HACHIKO_ROUTE_ID
+        : v.trip?.routeId || rtTrip?.routeId || staticTrip?.routeId || undefined;
+      const nextStopId = isHachiko
+        ? undefined // 停留所情報は当面対象外
+        : v.stopId || rtTrip?.nextStopId || undefined;
+      const officeId = isHachiko
+        ? (staticTrip?.officeId ?? hachikoOfficeId)
+        : staticTrip?.officeId;
+
+      if (isHachiko) hachikoActive = true;
+      if (routeId && !isHachiko) usedRouteIds.add(routeId);
       if (nextStopId) usedStopIds.add(nextStopId);
       if (officeId) usedOfficeIds.add(officeId);
 
@@ -72,9 +97,9 @@ export async function GET() {
             ? Math.round(pos.speed * 3.6)
             : undefined,
         "odpt:delay": rtTrip?.delay,
-        "odpt:vehicleNumber": v.vehicle?.label || v.vehicle?.id || undefined,
+        "odpt:vehicleNumber": vehicleNumber,
         officeId,
-        tripHeadsign: staticTrip?.headsign,
+        tripHeadsign: isHachiko ? undefined : staticTrip?.headsign,
       });
     }
 
@@ -109,6 +134,18 @@ export async function GET() {
         if (!o) return;
         officeMap[oid] = { name: o.name };
       });
+    }
+
+    // ハチ公バスの合成系統。静的 GTFS に存在しないためここで直接足す
+    // (静的データが無くても表示名は出せる)
+    if (hachikoActive) {
+      patternMap[HACHIKO_ROUTE_ID] = {
+        "@id": HACHIKO_ROUTE_ID,
+        "@type": "odpt:BusroutePattern",
+        "owl:sameAs": HACHIKO_ROUTE_ID,
+        "odpt:operator": "odpt.Operator:KeioBus",
+        "dc:title": HACHIKO_ROUTE_TITLE,
+      };
     }
 
     return NextResponse.json({
