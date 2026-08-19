@@ -510,7 +510,10 @@ function SelectedStopBar({
 function ApproachCard({ a }: { a: Approach }) {
   const delay = classifyDelay(a.delay);
   const eta = formatEtaSec(a.etaSec);
-  const imminent = a.stopsAway <= 0;
+  // 車載器 (レシップ) → ODPT のデータ転送遅延があり、フィード上
+  // 「あと 1 停留所」の時点で実際にはもう停留所の直前まで来ていることが
+  // 多い。そのため 1 停留所前から「まもなく」と表示する。
+  const imminent = a.stopsAway <= 1;
 
   return (
     <div
