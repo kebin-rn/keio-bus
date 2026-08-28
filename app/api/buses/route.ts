@@ -92,9 +92,13 @@ export async function GET() {
           pos.bearing !== null && pos.bearing !== undefined
             ? pos.bearing
             : undefined,
+        // GTFS-RT 仕様上 speed は m/s だが、京王バスのフィードは実測の結果
+        // 元から km/h で流している (GPS 変位との突き合わせで表示/実速度比の
+        // 中央値が 3.6 に一致し、m/s 解釈だと路線バスが最大 166km/h になる)。
+        // そのため単位変換せずそのまま使う。
         "odpt:speed":
           pos.speed !== null && pos.speed !== undefined
-            ? Math.round(pos.speed * 3.6)
+            ? Math.round(pos.speed)
             : undefined,
         "odpt:delay": rtTrip?.delay,
         "odpt:vehicleNumber": vehicleNumber,
