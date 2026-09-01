@@ -22,7 +22,12 @@ export const maxDuration = 60;
 
 export async function GET() {
   try {
-    const { vehicles, tripUpdates } = await fetchKeioBusFeeds();
+    const {
+      vehicles,
+      tripUpdates,
+      stale: feedStale,
+      fetchedAt: feedFetchedAt,
+    } = await fetchKeioBusFeeds();
     const stat = await getStaticGtfs();
     const { error: staticError } = getCachedStaticGtfs();
 
@@ -158,6 +163,9 @@ export async function GET() {
       stopMap,
       officeMap,
       fetchedAt: new Date().toISOString(),
+      // 上流障害でキャッシュ済みスナップショットを返している場合 true
+      feedStale,
+      feedFetchedAt: new Date(feedFetchedAt).toISOString(),
       vehicleCount: vehicles.entity.length,
       tripUpdateCount: tripUpdates?.entity.length ?? 0,
       staticAvailable: stat !== null,

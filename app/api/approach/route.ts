@@ -45,11 +45,12 @@ export async function GET(req: NextRequest) {
   const stopIdSet = new Set(stopIds);
 
   try {
-    const [{ vehicles, tripUpdates }, stat, schedule] = await Promise.all([
-      fetchKeioBusFeeds(),
-      getStaticGtfs(),
-      getSchedule().catch(() => null),
-    ]);
+    const [{ vehicles, tripUpdates, stale: feedStale }, stat, schedule] =
+      await Promise.all([
+        fetchKeioBusFeeds(),
+        getStaticGtfs(),
+        getSchedule().catch(() => null),
+      ]);
 
     if (!stat) {
       return NextResponse.json(
@@ -152,6 +153,7 @@ export async function GET(req: NextRequest) {
         : { ids: stopIds, name: stopIds[0] },
       approaches,
       scheduleAvailable: schedule !== null,
+      feedStale,
       fetchedAt: new Date().toISOString(),
     });
   } catch (e) {
