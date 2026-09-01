@@ -100,41 +100,57 @@ async function fetchFeed(url: string): Promise<FeedMessage> {
   if (!key) throw new Error("ODPT_CONSUMER_KEY is not set");
 
   const fullUrl = `${url}?acl:consumerKey=${encodeURIComponent(key)}`;
+  const name = url.slice(url.lastIndexOf("/") + 1);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  let res: Response;
+  // タイマーはヘッダ受信だけでなくボディ読み取り (arrayBuffer) 完了まで
+  // 生かしておく。ヘッダ到達後にボディが止まるハングは実際に起きるが、
+  // abort シグナルは undici のボディ読み取りにも効くため、この形なら
+  // どの段階の停止でも FETCH_TIMEOUT_MS で確実に打ち切れる。
   try {
-    res = await fetch(fullUrl, {
-      cache: "no-store",
-      signal: controller.signal,
-    });
-  } catch (e) {
-    const name = url.slice(url.lastIndexOf("/") + 1);
-    if (controller.signal.aborted) {
-      throw new Error(`GTFS-RT ${name} timeout (${FETCH_TIMEOUT_MS}ms)`);
+    let res: Response;
+    try {
+      res = await fetch(fullUrl, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+    } catch (e) {
+      if (controller.signal.aborted) {
+        throw new Error(`GTFS-RT ${name} timeout (${FETCH_TIMEOUT_MS}ms)`);
+      }
+      throw new Error(
+        `GTFS-RT ${name} fetch error: ${e instanceof Error ? e.message : e}`,
+      );
     }
-    throw new Error(
-      `GTFS-RT ${name} fetch error: ${e instanceof Error ? e.message : e}`,
-    );
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`GTFS-RT ${res.status}: ${body.slice(0, 200)}`);
+    }
+    let buf: ArrayBuffer;
+    try {
+      buf = await res.arrayBuffer();
+    } catch (e) {
+      if (controller.signal.aborted) {
+        throw new Error(`GTFS-RT ${name} body timeout (${FETCH_TIMEOUT_MS}ms)`);
+      }
+      throw new Error(
+        `GTFS-RT ${name} body read error: ${e instanceof Error ? e.message : e}`,
+      );
+    }
+    const type = getFeedMessageType();
+    const msg = type.decode(new Uint8Array(buf));
+    // toObject で素の JS オブジェクトに変換。longs: Number で uint64(timestamp 等)
+    // を Long ラッパーではなく Number 化 (Unix秒なので 2^53 余裕で収まる)
+    return type.toObject(msg, {
+      longs: Number,
+      enums: Number,
+      defaults: false,
+      arrays: true,
+      objects: false,
+    }) as FeedMessage;
   } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`GTFS-RT ${res.status}: ${body.slice(0, 200)}`);
-  }
-  const buf = await res.arrayBuffer();
-  const type = getFeedMessageType();
-  const msg = type.decode(new Uint8Array(buf));
-  // toObject で素の JS オブジェクトに変換。longs: Number で uint64(timestamp 等)
-  // を Long ラッパーではなく Number 化 (Unix秒なので 2^53 余裕で収まる)
-  return type.toObject(msg, {
-    longs: Number,
-    enums: Number,
-    defaults: false,
-    arrays: true,
-    objects: false,
-  }) as FeedMessage;
 }
 
 async function fetchBothFeeds(): Promise<FeedSnapshot> {
@@ -148,7 +164,13 @@ async function fetchBothFeeds(): Promise<FeedSnapshot> {
     tripUpdates,
     fetchedAt: Date.now(),
   };
-  feedCache = snapshot;
+  // trip_update が欠けた部分スナップショットは今回のリクエストにだけ使い、
+  // キャッシュには載せない。フレッシュ扱いでキャッシュすると、以後 5 秒間
+  // (障害時は最大 120 秒) の全リクエストが「遅延・接近情報なし」に汚染される。
+  // キャッシュに残る直近の完全なスナップショットの方がフォールバックとして適切。
+  if (tripUpdates !== null) {
+    feedCache = snapshot;
+  }
   return snapshot;
 }
 
@@ -166,8 +188,9 @@ export async function fetchKeioBusFeeds(): Promise<KeioBusFeeds> {
     const snapshot = await feedInflight;
     return { ...snapshot, stale: false };
   } catch (e) {
-    // 上流障害: 直近スナップショットが十分新しければそれで凌ぐ
-    if (feedCache && now - feedCache.fetchedAt < STALE_MAX_MS) {
+    // 上流障害: 直近スナップショットが十分新しければそれで凌ぐ。
+    // 経過時間はフェッチ待ちの分を含めた現在時刻で判定する
+    if (feedCache && Date.now() - feedCache.fetchedAt < STALE_MAX_MS) {
       return { ...feedCache, stale: true };
     }
     throw e;

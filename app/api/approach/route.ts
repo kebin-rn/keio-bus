@@ -59,6 +59,17 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    // trip_update フィードが取得できていない場合、接近判定は不可能。
+    // 空の 200 を返すと「接近中のバスはありません」と誤表示されるため
+    // 明示的にエラーにする (クライアントは前回の一覧を保持しつつ
+    // エラーバナーを表示する)。
+    if (!tripUpdates) {
+      return NextResponse.json(
+        { error: "リアルタイム便情報 (trip_update) を一時的に取得できません" },
+        { status: 503 },
+      );
+    }
+
     // trip_id → 現在の車両位置（current_stop_sequence を得るため）
     const vehByTrip = new Map<string, (typeof vehicles.entity)[number]["vehicle"]>();
     for (const ent of vehicles.entity) {
