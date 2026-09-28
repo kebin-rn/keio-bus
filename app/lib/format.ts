@@ -43,3 +43,13 @@ export function formatEtaSec(sec: number | undefined): string | null {
   const m = Math.floor((s % 3600) / 60);
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
+
+// 0時起点の秒 (GTFS の時刻、24時超えあり) が現在 (JST) から何分後かを返す。
+// 深夜の便は 24:10 = 87000 秒のように表記されるので、差を ±12 時間の範囲に
+// 正規化して日付またぎを吸収する。
+export function minutesFromNowJst(sec: number, nowMs: number = Date.now()): number {
+  const nowSec = (nowMs / 1000 + 9 * 3600) % 86400;
+  let diff = (((sec - nowSec) % 86400) + 86400) % 86400;
+  if (diff > 43200) diff -= 86400;
+  return Math.round(diff / 60);
+}

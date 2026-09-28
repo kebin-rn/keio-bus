@@ -360,3 +360,13 @@ function parseTrips(csv: string): Record<string, TripInfo> {
   }
   return out;
 }
+
+// 系統の表示名 (route_short_name + route_long_name、無ければ route_id)
+export function routeTitleOf(stat: StaticGtfs, routeId: string): string {
+  const r = stat.routes[routeId];
+  if (!r) return routeId;
+  if (r.shortName) {
+    return r.longName ? `${r.shortName} ${r.longName}` : r.shortName;
+  }
+  return r.longName || routeId;
+}

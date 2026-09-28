@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import MultiSelect from "../components/MultiSelect";
+import TripDetailSheet from "../components/TripDetailSheet";
 import { classifyDelay, formatEtaSec } from "../lib/format";
 
 const REFRESH_MS = 20_000;
@@ -24,6 +25,7 @@ interface Approach {
   officeId?: string;
   officeName?: string;
   stopsAway: number;
+  targetSeq: number;
   delay?: number;
   nextStopName?: string;
   etaSec?: number;
@@ -39,6 +41,13 @@ export default function StopPage() {
   const [selected, setSelected] = useState<StopItem | null>(null);
 
   const [approaches, setApproaches] = useState<Approach[]>([]);
+  // 詳細シートで表示中の便 (カードをタップで開く)
+  const [openTrip, setOpenTrip] = useState<{
+    tripId: string;
+    targetSeq: number;
+    title?: string;
+  } | null>(null);
+  const closeTrip = useCallback(() => setOpenTrip(null), []);
   // 系統・方面は複数選択可 (空配列 = すべて)
   const [routeFilters, setRouteFilters] = useState<string[]>([]);
   const [dirFilters, setDirFilters] = useState<string[]>([]);
@@ -99,6 +108,7 @@ export default function StopPage() {
   }, [selectedId]);
 
   useEffect(() => {
+    setOpenTrip(null);
     if (!selectedId) return;
     setApproaches([]);
     setRouteFilters([]);
@@ -302,13 +312,32 @@ export default function StopPage() {
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {shown.map((a) => (
-                  <ApproachCard key={a.tripId} a={a} />
+                  <ApproachCard
+                    key={a.tripId}
+                    a={a}
+                    onOpen={() =>
+                      setOpenTrip({
+                        tripId: a.tripId,
+                        targetSeq: a.targetSeq,
+                        title: a.routeTitle,
+                      })
+                    }
+                  />
                 ))}
               </div>
             )}
           </>
         )}
       </main>
+      {openTrip && (
+        <TripDetailSheet
+          key={openTrip.tripId}
+          tripId={openTrip.tripId}
+          highlightSeq={openTrip.targetSeq}
+          fallbackTitle={openTrip.title}
+          onClose={closeTrip}
+        />
+      )}
     </div>
   );
 }
@@ -507,7 +536,7 @@ function SelectedStopBar({
   );
 }
 
-function ApproachCard({ a }: { a: Approach }) {
+function ApproachCard({ a, onOpen }: { a: Approach; onOpen: () => void }) {
   const delay = classifyDelay(a.delay);
   const eta = formatEtaSec(a.etaSec);
   // 車載器 (レシップ) → ODPT のデータ転送遅延があり、フィード上
@@ -517,6 +546,16 @@ function ApproachCard({ a }: { a: Approach }) {
 
   return (
     <div
+      role="button"
+      tabIndex={0}
+      aria-label={`${a.routeTitle ?? "系統不明"}${a.headsign ? ` ${a.headsign}行` : ""} の詳細を表示`}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
       style={{
         display: "flex",
         alignItems: "stretch",
@@ -525,6 +564,7 @@ function ApproachCard({ a }: { a: Approach }) {
         background: "#1e293b",
         border: `1px solid ${imminent ? "#f59e0b" : "#334155"}`,
         borderRadius: 10,
+        cursor: "pointer",
       }}
     >
       <div
@@ -594,7 +634,7 @@ function ApproachCard({ a }: { a: Approach }) {
         </div>
       </div>
 
-      <div style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
+      <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
         <span
           style={{
             padding: "3px 8px",
@@ -607,6 +647,9 @@ function ApproachCard({ a }: { a: Approach }) {
           }}
         >
           {delay.label}
+        </span>
+        <span aria-hidden="true" style={{ color: "#64748b", fontSize: 18 }}>
+          ›
         </span>
       </div>
     </div>

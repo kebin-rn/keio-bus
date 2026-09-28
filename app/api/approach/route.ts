@@ -1,19 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchKeioBusFeeds } from "@/app/lib/gtfsrt";
-import { getStaticGtfs, type StaticGtfs } from "@/app/lib/staticGtfs";
+import { getStaticGtfs, routeTitleOf } from "@/app/lib/staticGtfs";
 import { getSchedule, scheduleKey } from "@/app/lib/schedule";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
-
-function routeTitleOf(stat: StaticGtfs, routeId: string): string {
-  const r = stat.routes[routeId];
-  if (!r) return routeId;
-  if (r.shortName) {
-    return r.longName ? `${r.shortName} ${r.longName}` : r.shortName;
-  }
-  return r.longName || routeId;
-}
 
 export interface Approach {
   tripId: string;
@@ -23,6 +14,7 @@ export interface Approach {
   officeId?: string;
   officeName?: string;
   stopsAway: number;
+  targetSeq: number; // 対象停留所に着く便内の stop_sequence (便詳細でその行を強調する)
   delay?: number;
   nextStopName?: string;
   etaSec?: number; // 0時起点の秒（到着予定=定刻+delay）。24時超えは 86400 で剰余して表示
@@ -143,6 +135,7 @@ export async function GET(req: NextRequest) {
           ? stat.offices[trip.officeId]?.name
           : undefined,
         stopsAway,
+        targetSeq,
         delay,
         nextStopName: nextStopId ? stat.stops[nextStopId]?.name : undefined,
         etaSec,
