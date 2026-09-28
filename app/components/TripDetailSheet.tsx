@@ -291,9 +291,8 @@ export default function TripDetailSheet({
             flexShrink: 0,
           }}
         >
-          到着予想は定刻に現在の遅延を加えた目安です
           {lastUpdated &&
-            ` · ${lastUpdated.toLocaleTimeString("ja-JP")} 更新 (20秒毎)`}
+            `${lastUpdated.toLocaleTimeString("ja-JP")} 更新 (20秒毎)`}
         </div>
       </div>
     </div>
