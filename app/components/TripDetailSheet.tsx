@@ -8,11 +8,13 @@ import {
 } from "../lib/format";
 
 const REFRESH_MS = 20_000;
+// 接近ボードの「まもなく」と同じ基準 (車載器→ODPT の転送遅延を見込んで 1 停留所前から)
+const IMMINENT_STOPS = 1;
 
 interface TripStop {
   seq: number;
   stopId: string;
-  name: string;
+  name: string | null;
   scheduledSec?: number;
   predictedSec?: number;
   state: "passed" | "current" | "upcoming";
@@ -26,6 +28,7 @@ interface TripDetail {
   vehicleNumber?: string;
   delay?: number;
   currentStopSequence: number;
+  beforeDeparture: boolean;
   vehicleStatus: "stopped" | "approaching";
 }
 
@@ -45,13 +48,19 @@ export default function TripDetailSheet({
   const [trip, setTrip] = useState<TripDetail | null>(null);
   const [stops, setStops] = useState<TripStop[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // 便の運行が終わった (API が 404)。以後は更新を止め、現在位置・カウントダウンを出さない
+  const [ended, setEnded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const reqSeq = useRef(0);
+  const endedRef = useRef(false);
   const scrolledFor = useRef<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
 
   const load = useCallback(async () => {
+    if (endedRef.current) return;
     const my = ++reqSeq.current;
     setLoading(true);
     try {
@@ -60,6 +69,12 @@ export default function TripDetailSheet({
       });
       const data = await res.json();
       if (my !== reqSeq.current) return;
+      if (res.status === 404) {
+        endedRef.current = true;
+        setEnded(true);
+        setError(null);
+        return;
+      }
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       setTrip(data.trip);
       setStops(data.stops || []);
@@ -74,9 +89,6 @@ export default function TripDetailSheet({
   }, [tripId]);
 
   useEffect(() => {
-    setTrip(null);
-    setStops([]);
-    setError(null);
     load();
     const id = setInterval(load, REFRESH_MS);
     return () => {
@@ -85,17 +97,56 @@ export default function TripDetailSheet({
     };
   }, [load]);
 
-  // Esc で閉じる + 背面のスクロールを止める
+  // フォーカス管理: 開いたら閉じるボタンへ移し、Tab はシート内で循環させ、
+  // 閉じたら開く前の要素 (タップしたカード) に戻す
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    closeBtnRef.current?.focus();
+    return () => {
+      if (opener && document.contains(opener)) opener.focus();
+    };
+  }, []);
+
+  // Esc で閉じる / Tab トラップ / 背面スクロール停止
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab" || !panelRef.current) return;
+      const focusables = Array.from(
+        panelRef.current.querySelectorAll<HTMLElement>(
+          'button, [href], [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => !el.hasAttribute("disabled"));
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+      if (!panelRef.current.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener("keydown", onKey);
+
+    // overflow:hidden でスクロールバーが消えて背面が横にずれないよう、その幅を補う
+    const scrollbar = window.innerWidth - document.documentElement.clientWidth;
     const prevOverflow = document.body.style.overflow;
+    const prevPadding = document.body.style.paddingRight;
     document.body.style.overflow = "hidden";
+    if (scrollbar > 0) document.body.style.paddingRight = `${scrollbar}px`;
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
+      document.body.style.paddingRight = prevPadding;
     };
   }, [onClose]);
 
@@ -115,6 +166,19 @@ export default function TripDetailSheet({
   const delayInfo = classifyDelay(trip?.delay);
   const current = stops.find((s) => s.state === "current");
   const remaining = stops.filter((s) => s.state !== "passed").length;
+  const live = !ended && trip !== null;
+
+  let positionText: string | null = null;
+  if (live && current) {
+    const name = current.name ?? "停留所名不明";
+    positionText = trip.beforeDeparture
+      ? trip.vehicleStatus === "stopped"
+        ? `始発 ${name} で発車待ち`
+        : `始発 ${name} に向かっています`
+      : trip.vehicleStatus === "stopped"
+        ? `${name} に停車中`
+        : `${name} に接近中`;
+  }
 
   return (
     <div
@@ -132,6 +196,7 @@ export default function TripDetailSheet({
         }}
       />
       <div
+        ref={panelRef}
         style={{
           position: "absolute",
           left: "50%",
@@ -186,7 +251,7 @@ export default function TripDetailSheet({
                   color: "#94a3b8",
                 }}
               >
-                {trip && (
+                {live && (
                   <span
                     style={{
                       padding: "2px 8px",
@@ -201,10 +266,11 @@ export default function TripDetailSheet({
                 )}
                 {trip?.vehicleNumber && <span>#{trip.vehicleNumber}</span>}
                 {trip?.officeName && <span>{trip.officeName}</span>}
-                {remaining > 0 && <span>残り {remaining} 停留所</span>}
+                {live && remaining > 0 && <span>残り {remaining} 停留所</span>}
               </div>
             </div>
             <button
+              ref={closeBtnRef}
               type="button"
               onClick={onClose}
               aria-label="閉じる"
@@ -222,7 +288,7 @@ export default function TripDetailSheet({
               ×
             </button>
           </div>
-          {current && trip && (
+          {positionText && (
             <div
               style={{
                 marginTop: 10,
@@ -232,9 +298,21 @@ export default function TripDetailSheet({
                 fontSize: 13,
               }}
             >
-              🚌 現在:{" "}
-              <strong>{current.name}</strong>
-              {trip.vehicleStatus === "stopped" ? " に停車中" : " に接近中"}
+              🚌 現在: <strong>{positionText}</strong>
+            </div>
+          )}
+          {ended && (
+            <div
+              style={{
+                marginTop: 10,
+                padding: "8px 10px",
+                background: "#1e293b",
+                color: "#cbd5e1",
+                borderRadius: 8,
+                fontSize: 13,
+              }}
+            >
+              この便は運行を終了したか、情報を取得できなくなりました
             </div>
           )}
           {error && (
@@ -265,7 +343,7 @@ export default function TripDetailSheet({
         >
           {stops.length === 0 ? (
             <div style={{ padding: 32, textAlign: "center", color: "#64748b", fontSize: 13 }}>
-              {loading ? "読み込み中..." : "停留所情報がありません"}
+              {loading ? "読み込み中..." : ended ? "" : "停留所情報がありません"}
             </div>
           ) : (
             stops.map((s, i) => (
@@ -275,25 +353,34 @@ export default function TripDetailSheet({
                 isFirst={i === 0}
                 isLast={i === stops.length - 1}
                 highlighted={s.seq === highlightSeq}
-                busHere={s.state === "current"}
-                busStopped={trip?.vehicleStatus === "stopped"}
+                live={live}
+                stopsAhead={trip ? s.seq - trip.currentStopSequence : Infinity}
+                beforeDeparture={trip?.beforeDeparture ?? false}
+                busStatusText={
+                  trip?.beforeDeparture
+                    ? "発車前"
+                    : trip?.vehicleStatus === "stopped"
+                      ? "停車中"
+                      : "接近中"
+                }
               />
             ))
           )}
         </div>
 
-        <div
-          style={{
-            padding: "8px 16px",
-            borderTop: "1px solid #1e293b",
-            fontSize: 10,
-            color: "#64748b",
-            flexShrink: 0,
-          }}
-        >
-          {lastUpdated &&
-            `${lastUpdated.toLocaleTimeString("ja-JP")} 更新 (20秒毎)`}
-        </div>
+        {lastUpdated && !ended && (
+          <div
+            style={{
+              padding: "8px 16px",
+              borderTop: "1px solid #1e293b",
+              fontSize: 10,
+              color: "#64748b",
+              flexShrink: 0,
+            }}
+          >
+            {`${lastUpdated.toLocaleTimeString("ja-JP")} 更新 (20秒毎)`}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -304,23 +391,39 @@ function StopRow({
   isFirst,
   isLast,
   highlighted,
-  busHere,
-  busStopped,
+  live,
+  stopsAhead,
+  beforeDeparture,
+  busStatusText,
 }: {
   stop: TripStop;
   isFirst: boolean;
   isLast: boolean;
   highlighted: boolean;
-  busHere: boolean;
-  busStopped: boolean;
+  live: boolean; // 運行中の最新情報か (終了後は現在位置・カウントダウンを出さない)
+  stopsAhead: number; // バスの現在位置から何停留所先か
+  beforeDeparture: boolean;
+  busStatusText: string;
 }) {
   const passed = stop.state === "passed";
+  const busHere = live && stop.state === "current";
   const scheduled = formatEtaSec(stop.scheduledSec);
   const predicted = formatEtaSec(stop.predictedSec);
-  const mins =
-    stop.predictedSec !== undefined ? minutesFromNowJst(stop.predictedSec) : null;
   const lineColor = "#334155";
   const doneColor = "#475569";
+
+  // 未通過の停留所の相対表示。「まもなく」は接近ボードと同じく停留所数で判定し
+  // (始発で発車を待っている間は除く)、それ以外は予想時刻までの分数を出す
+  // (予想時刻を過ぎていれば時刻のみ表示)
+  let relative: string | null = null;
+  if (live && !passed && !busHere) {
+    if (!beforeDeparture && stopsAhead <= IMMINENT_STOPS) {
+      relative = "まもなく";
+    } else if (stop.predictedSec !== undefined) {
+      const mins = minutesFromNowJst(stop.predictedSec);
+      if (mins >= 1) relative = `約${mins}分後`;
+    }
+  }
 
   return (
     <div
@@ -346,8 +449,10 @@ function StopRow({
           fontVariantNumeric: "tabular-nums",
         }}
       >
-        {passed ? (
-          <span style={{ fontSize: 12, color: doneColor }}>{scheduled ?? "—"}</span>
+        {passed || !live ? (
+          <span style={{ fontSize: 12, color: passed ? doneColor : "#94a3b8" }}>
+            {scheduled ?? "—"}
+          </span>
         ) : (
           <>
             <span style={{ fontSize: 14, fontWeight: 700, color: "#f1f5f9" }}>
@@ -415,13 +520,13 @@ function StopRow({
           style={{
             fontSize: 14,
             fontWeight: busHere || highlighted ? 700 : 400,
-            color: passed ? doneColor : "#f1f5f9",
+            color: passed || stop.name === null ? doneColor : "#f1f5f9",
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
           }}
         >
-          {stop.name}
+          {stop.name ?? "停留所名不明"}
         </span>
         <span style={{ flexShrink: 0, display: "flex", gap: 6, alignItems: "center" }}>
           {highlighted && (
@@ -440,14 +545,12 @@ function StopRow({
           )}
           {busHere && (
             <span style={{ fontSize: 11, color: "#fbbf24", fontWeight: 600 }}>
-              {busStopped ? "停車中" : "接近中"}
+              {busStatusText}
             </span>
           )}
           {passed && <span style={{ fontSize: 11, color: doneColor }}>通過</span>}
-          {!passed && !busHere && mins !== null && (
-            <span style={{ fontSize: 11, color: "#94a3b8" }}>
-              {mins <= 0 ? "まもなく" : `約${mins}分後`}
-            </span>
+          {relative && (
+            <span style={{ fontSize: 11, color: "#94a3b8" }}>{relative}</span>
           )}
         </span>
       </div>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchKeioBusFeeds } from "@/app/lib/gtfsrt";
 import { getStaticGtfs, routeTitleOf } from "@/app/lib/staticGtfs";
 import { getSchedule, scheduleKey } from "@/app/lib/schedule";
+import { tripProgress } from "@/app/lib/tripProgress";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -15,6 +16,7 @@ export interface Approach {
   officeName?: string;
   stopsAway: number;
   targetSeq: number; // 対象停留所に着く便内の stop_sequence (便詳細でその行を強調する)
+  beforeDeparture: boolean; // 始発をまだ発車していない
   delay?: number;
   nextStopName?: string;
   etaSec?: number; // 0時起点の秒（到着予定=定刻+delay）。24時超えは 86400 で剰余して表示
@@ -82,6 +84,12 @@ export async function GET(req: NextRequest) {
       if (veh === undefined || curSeq === undefined) continue; // 位置不明は除外
 
       const stus = tu.stopTimeUpdate ?? [];
+      const progress = tripProgress(
+        curSeq,
+        stus.flatMap((s) => (s.stopSequence !== undefined ? [s.stopSequence] : [])),
+        tu.delay,
+      );
+      const cur = progress.effectiveSeq;
 
       // これから到達する対象ポール（seq >= 現在seq）のうち最初のもの
       let targetSeq: number | undefined;
@@ -90,7 +98,7 @@ export async function GET(req: NextRequest) {
           s.stopId !== undefined &&
           stopIdSet.has(s.stopId) &&
           s.stopSequence !== undefined &&
-          s.stopSequence >= curSeq &&
+          s.stopSequence >= cur &&
           (targetSeq === undefined || s.stopSequence < targetSeq)
         ) {
           targetSeq = s.stopSequence;
@@ -98,7 +106,7 @@ export async function GET(req: NextRequest) {
       }
       if (targetSeq === undefined) continue; // この便はこの先この停留所を通らない
 
-      const stopsAway = targetSeq - curSeq;
+      const stopsAway = targetSeq - cur;
 
       // バスの「次の停留所」= seq >= 現在seq の最小
       let nextStopId: string | undefined;
@@ -106,7 +114,7 @@ export async function GET(req: NextRequest) {
       for (const s of stus) {
         if (
           s.stopSequence !== undefined &&
-          s.stopSequence >= curSeq &&
+          s.stopSequence >= cur &&
           s.stopSequence < bestSeq
         ) {
           bestSeq = s.stopSequence;
@@ -116,13 +124,13 @@ export async function GET(req: NextRequest) {
 
       const trip = stat.trips[tid];
       const routeId = trip?.routeId;
-      const delay = tu.delay;
+      const delay = progress.effectiveDelay;
 
       let etaSec: number | undefined;
       if (schedule) {
         // 定刻はこの通過 (targetSeq) のものを引く。循環路線でも取り違えない。
         const base = schedule.get(scheduleKey(tid, targetSeq));
-        if (base !== undefined) etaSec = base + (delay ?? 0);
+        if (base !== undefined) etaSec = base + delay;
       }
 
       approaches.push({
@@ -136,6 +144,7 @@ export async function GET(req: NextRequest) {
           : undefined,
         stopsAway,
         targetSeq,
+        beforeDeparture: progress.beforeDeparture,
         delay,
         nextStopName: nextStopId ? stat.stops[nextStopId]?.name : undefined,
         etaSec,

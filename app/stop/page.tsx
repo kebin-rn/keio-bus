@@ -26,6 +26,7 @@ interface Approach {
   officeName?: string;
   stopsAway: number;
   targetSeq: number;
+  beforeDeparture?: boolean;
   delay?: number;
   nextStopName?: string;
   etaSec?: number;
@@ -333,7 +334,12 @@ export default function StopPage() {
         <TripDetailSheet
           key={openTrip.tripId}
           tripId={openTrip.tripId}
-          highlightSeq={openTrip.targetSeq}
+          highlightSeq={
+            // 20 秒更新の最新値を優先。循環路線でバスが 1 回目の通過を過ぎた後も、
+            // 次に来る通過回を強調するため
+            approaches.find((a) => a.tripId === openTrip.tripId)?.targetSeq ??
+            openTrip.targetSeq
+          }
           fallbackTitle={openTrip.title}
           onClose={closeTrip}
         />
@@ -542,13 +548,26 @@ function ApproachCard({ a, onOpen }: { a: Approach; onOpen: () => void }) {
   // 車載器 (レシップ) → ODPT のデータ転送遅延があり、フィード上
   // 「あと 1 停留所」の時点で実際にはもう停留所の直前まで来ていることが
   // 多い。そのため 1 停留所前から「まもなく」と表示する。
-  const imminent = a.stopsAway <= 1;
+  // ただし始発で発車を待っているバスは、あと 1 停留所でも発車まで時間が
+  // あるため対象外 (対象停留所が始発そのものの場合は除く)。
+  const waitingAtOrigin = a.beforeDeparture === true && a.stopsAway >= 1;
+  const imminent = a.stopsAway <= 1 && !waitingAtOrigin;
 
   return (
     <div
       role="button"
       tabIndex={0}
-      aria-label={`${a.routeTitle ?? "系統不明"}${a.headsign ? ` ${a.headsign}行` : ""} の詳細を表示`}
+      aria-label={[
+        imminent ? "まもなく" : `あと${a.stopsAway}停留所`,
+        eta ? `${eta}着予定` : null,
+        a.routeTitle ?? "系統不明",
+        a.headsign ? `${a.headsign}行` : null,
+        delay.label,
+        waitingAtOrigin ? "始発で発車待ち" : null,
+        "詳細を表示",
+      ]
+        .filter(Boolean)
+        .join("、")}
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -628,7 +647,11 @@ function ApproachCard({ a, onOpen }: { a: Approach; onOpen: () => void }) {
             whiteSpace: "nowrap",
           }}
         >
-          {a.nextStopName ? `次: ${a.nextStopName} 付近` : ""}
+          {waitingAtOrigin
+            ? "始発で発車待ち"
+            : a.nextStopName
+              ? `次: ${a.nextStopName} 付近`
+              : ""}
           {a.vehicleNumber ? ` · #${a.vehicleNumber}` : ""}
           {a.officeName ? ` · ${a.officeName}` : ""}
         </div>
