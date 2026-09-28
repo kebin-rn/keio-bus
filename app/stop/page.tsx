@@ -557,6 +557,7 @@ function ApproachCard({ a, onOpen }: { a: Approach; onOpen: () => void }) {
     <div
       role="button"
       tabIndex={0}
+      data-trip-card
       aria-label={[
         imminent ? "まもなく" : `あと${a.stopsAway}停留所`,
         eta ? `${eta}着予定` : null,

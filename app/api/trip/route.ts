@@ -32,8 +32,6 @@ export interface TripDetail {
   lng?: number;
 }
 
-const STOPPED_AT = 1;
-
 // 便の全停留所と到着予想を返す。
 // 停留所列は trip_update から組む: 京王バスのフィードは各便の全停留所を
 // stop_sequence 1 から列挙している (通過済みも含む) ため、静的 GTFS に
@@ -81,11 +79,10 @@ export async function GET(req: NextRequest) {
           s.stopSequence !== undefined && s.stopId !== undefined,
       )
       .sort((a, b) => a.stopSequence - b.stopSequence);
-    const progress = tripProgress(
-      curSeq,
-      rtStops.map((s) => s.stopSequence),
-      tu.delay,
-    );
+    const progress = tripProgress(veh, rtStops, tu.delay, (id) => {
+      const st = stat?.stops[id];
+      return st ? { lat: st.lat, lng: st.lng } : undefined;
+    });
     const cur = progress.effectiveSeq;
     const delay = progress.effectiveDelay;
 
@@ -124,7 +121,7 @@ export async function GET(req: NextRequest) {
       delay,
       currentStopSequence: cur,
       beforeDeparture: progress.beforeDeparture,
-      vehicleStatus: veh.currentStatus === STOPPED_AT ? "stopped" : "approaching",
+      vehicleStatus: progress.stopped ? "stopped" : "approaching",
       lat: veh.position?.latitude,
       lng: veh.position?.longitude,
     };

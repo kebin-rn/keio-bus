@@ -54,6 +54,8 @@ export default function TripDetailSheet({
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const reqSeq = useRef(0);
   const endedRef = useRef(false);
+  // 便がフィードから一瞬だけ消えることがあるため、404 が 2 回続いたら運行終了とみなす
+  const notFoundCount = useRef(0);
   const scrolledFor = useRef<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -70,11 +72,15 @@ export default function TripDetailSheet({
       const data = await res.json();
       if (my !== reqSeq.current) return;
       if (res.status === 404) {
-        endedRef.current = true;
-        setEnded(true);
-        setError(null);
+        notFoundCount.current += 1;
+        if (notFoundCount.current >= 2) {
+          endedRef.current = true;
+          setEnded(true);
+          setError(null);
+        }
         return;
       }
+      notFoundCount.current = 0;
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       setTrip(data.trip);
       setStops(data.stops || []);
@@ -103,7 +109,12 @@ export default function TripDetailSheet({
     const opener = document.activeElement as HTMLElement | null;
     closeBtnRef.current?.focus();
     return () => {
-      if (opener && document.contains(opener)) opener.focus();
+      if (opener && document.contains(opener)) {
+        opener.focus();
+        return;
+      }
+      // 開いている間にバスが停留所を過ぎてカードが消えた場合は、一覧の先頭へ
+      document.querySelector<HTMLElement>("[data-trip-card]")?.focus();
     };
   }, []);
 
@@ -333,6 +344,9 @@ export default function TripDetailSheet({
 
         <div
           ref={listRef}
+          tabIndex={0}
+          role="region"
+          aria-label="停留所一覧"
           style={{
             overflowY: "auto",
             flex: 1,

@@ -84,11 +84,10 @@ export async function GET(req: NextRequest) {
       if (veh === undefined || curSeq === undefined) continue; // 位置不明は除外
 
       const stus = tu.stopTimeUpdate ?? [];
-      const progress = tripProgress(
-        curSeq,
-        stus.flatMap((s) => (s.stopSequence !== undefined ? [s.stopSequence] : [])),
-        tu.delay,
-      );
+      const progress = tripProgress(veh, stus, tu.delay, (id) => {
+        const st = stat.stops[id];
+        return st ? { lat: st.lat, lng: st.lng } : undefined;
+      });
       const cur = progress.effectiveSeq;
 
       // これから到達する対象ポール（seq >= 現在seq）のうち最初のもの

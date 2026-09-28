@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { buildTripInfo, fetchKeioBusFeeds } from "@/app/lib/gtfsrt";
 import { getCachedStaticGtfs, getStaticGtfs } from "@/app/lib/staticGtfs";
+import { tripProgress } from "@/app/lib/tripProgress";
 import {
   getHachikoVehicleNumbers,
   HACHIKO_OFFICE_NAME,
@@ -32,6 +33,14 @@ export async function GET() {
     const { error: staticError } = getCachedStaticGtfs();
 
     const tripInfo = buildTripInfo(tripUpdates);
+    // 遅延表示を接近ボード・便詳細と揃えるため、便ごとの停留所列も引けるようにする
+    const stopTimesByTrip = new Map(
+      (tripUpdates?.entity ?? []).flatMap((e) =>
+        e.tripUpdate?.trip?.tripId
+          ? [[e.tripUpdate.trip.tripId, e.tripUpdate.stopTimeUpdate ?? []] as const]
+          : [],
+      ),
+    );
     const hachikoNumbers = getHachikoVehicleNumbers();
     // ハチ公バスは中野営業所の受託。officeId は版によって変わり得るため
     // ID 直書きではなく営業所名から引く
@@ -105,7 +114,15 @@ export async function GET() {
           pos.speed !== null && pos.speed !== undefined
             ? Math.round(pos.speed)
             : undefined,
-        "odpt:delay": rtTrip?.delay,
+        // 始発で発車待ちの便の早着分 (負の遅延) を「早発」と出さないよう、
+        // 接近ボードと同じ補正をかける
+        "odpt:delay":
+          rtTrip?.delay === undefined || tripId === undefined
+            ? rtTrip?.delay
+            : tripProgress(v, stopTimesByTrip.get(tripId) ?? [], rtTrip.delay, (id) => {
+                const st = stat?.stops[id];
+                return st ? { lat: st.lat, lng: st.lng } : undefined;
+              }).effectiveDelay,
         "odpt:vehicleNumber": vehicleNumber,
         officeId,
         tripHeadsign: isHachiko ? undefined : staticTrip?.headsign,
