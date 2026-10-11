@@ -138,6 +138,18 @@ export default function Page() {
         error={error}
         onRefresh={fetchBuses}
         totalBuses={buses.length}
+        routeToggle={
+          // 地図を出しているときだけ。フィルタ欄に置くと欄が折り返しやすくなる
+          // (幅 1,024px 前後で系統を選ぶと 2 段になり地図が縮む) ため、余白のある
+          // 画面上部に置く。高さは隣のボタンに合わせる
+          apiKey ? (
+            <RouteToggle
+              checked={showRoute}
+              onChange={setShowRoute}
+              style={{ height: "auto", padding: "6px 10px", fontSize: 12 }}
+            />
+          ) : null
+        }
       />
       {apiKey && (
         <FilterToolbar
@@ -147,11 +159,9 @@ export default function Page() {
           routeFilters={routeFilters}
           directionFilters={directionFilters}
           searchQuery={searchQuery}
-          showRoute={showRoute}
           officeOptions={officeOptions}
           routeOptions={routeOptions}
           directionOptions={directionOptions}
-          onChangeShowRoute={setShowRoute}
           onChangeOffice={(v) => {
             setOfficeFilter(v);
             setRouteFilters([]);
@@ -220,12 +230,14 @@ function Header({
   error,
   onRefresh,
   totalBuses,
+  routeToggle,
 }: {
   lastUpdated: Date | null;
   loading: boolean;
   error: string | null;
   onRefresh: () => void;
   totalBuses: number;
+  routeToggle: React.ReactNode;
 }) {
   return (
     <header
@@ -249,6 +261,7 @@ function Header({
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {routeToggle}
         {error && (
           <span
             style={{
@@ -323,11 +336,9 @@ function FilterToolbar({
   routeFilters,
   directionFilters,
   searchQuery,
-  showRoute,
   officeOptions,
   routeOptions,
   directionOptions,
-  onChangeShowRoute,
   onChangeOffice,
   onChangeRoutes,
   onChangeDirections,
@@ -339,11 +350,9 @@ function FilterToolbar({
   routeFilters: string[];
   directionFilters: string[];
   searchQuery: string;
-  showRoute: boolean;
   officeOptions: { id: string; name: string; count: number }[];
   routeOptions: { id: string; title: string; count: number }[];
   directionOptions: { name: string; count: number }[];
-  onChangeShowRoute: (on: boolean) => void;
   onChangeOffice: (v: string) => void;
   onChangeRoutes: (v: string[]) => void;
   onChangeDirections: (v: string[]) => void;
@@ -446,12 +455,6 @@ function FilterToolbar({
           containerStyle={{ flex: "0 1 220px", minWidth: 160, maxWidth: 260 }}
         />
       )}
-      {/* 絞り込みとは別の表示設定なので右端に置く (方面の表示有無で位置が動かない) */}
-      <RouteToggle
-        checked={showRoute}
-        onChange={onChangeShowRoute}
-        style={{ marginLeft: "auto" }}
-      />
     </div>
   );
 }

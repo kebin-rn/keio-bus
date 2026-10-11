@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { ROUTE_COLOR } from "./BusMap";
 
-// 地図の経路表示のオン/オフ (PC 版はフィルタ欄の右端、スマホ版は検索欄の右)。
-// 見た目は隣のフィルタのコントロールに合わせ、オンの色は地図の経路の線と同じ青にする。
+// 地図の経路表示のオン/オフ (PC 版は画面上部の更新ボタンの左、スマホ版は検索欄の右)。
+// 見た目は隣のボタンや入力欄に合わせ、オンの色は地図の経路の線と同じ青にする。
 // 絞り込み中を表す水色 (MultiSelect) は使わない (オンは既定の状態のため)
 export default function RouteToggle({
   checked,
@@ -58,6 +58,9 @@ export default function RouteToggle({
           borderRadius: 999,
           background: checked ? ROUTE_COLOR : "#64748b",
           transition: `background-color ${duration} ease`,
+          // Windows のコントラスト テーマ (強制カラー) でも、つまみと地の色を残して
+          // オン/オフが見分けられるようにする (つまみにも引き継がれる)
+          forcedColorAdjust: "none",
         }}
       >
         <span

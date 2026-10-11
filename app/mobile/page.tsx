@@ -368,7 +368,8 @@ function FilterBar({
             aria-label="車番で検索"
             style={{
               ...selectStyle,
-              paddingRight: 32,
+              // × の分の余白は入力があるときだけ取る (狭い画面でも例示まで見えるように)
+              paddingRight: searchQuery ? 32 : 8,
             }}
           />
           {searchQuery && (
