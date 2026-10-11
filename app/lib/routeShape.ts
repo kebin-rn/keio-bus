@@ -2,8 +2,9 @@
 //
 // 経路の計算は Google Routes API を使う (routeShapeCore.ts)。同じ停留所列 (系統の
 // 運行パターン) の結果は Next.js のデータキャッシュに 7 日間保存し、インスタンスや
-// デプロイをまたいで使い回す。京王バスの運行パターンは高々 2,000 程度なので、
-// 一巡しても Routes API の無料枠 (月 10,000 回) に収まる。
+// デプロイをまたいで使い回す。京王バスの運行パターンは 600 弱 (停留所は平均 14 か所)
+// で、すべて一巡しても 600 件程度の要求で済み、毎週計算し直しても Routes API の
+// 無料枠 (Pro: 月 5,000 件) に収まる。
 //
 // GOOGLE_ROUTES_API_KEY が未設定なら経路形状は返さず、地図側は停留所を結んだ
 // 「おおよその経路」(点線) で表示する。
@@ -23,7 +24,7 @@ const ROUTES_API_URL =
 const REVALIDATE_SEC = 7 * 24 * 60 * 60;
 // 1 インスタンスあたり 1 時間の要求数の上限。キャッシュが効かない状況でも
 // 料金が膨らまないようにするための安全弁 (通常はキャッシュでほぼ使わない)
-const HOURLY_REQUEST_BUDGET = 400;
+const HOURLY_REQUEST_BUDGET = 200;
 
 export function routesApiConfigured(): boolean {
   return Boolean(process.env.GOOGLE_ROUTES_API_KEY);
@@ -61,24 +62,29 @@ const cachedShapeLegs = unstable_cache(
   { revalidate: REVALIDATE_SEC },
 );
 
-// 同じインスタンス内では計算中・計算済みの結果を共有する
-const memo = new Map<string, Promise<(string | null)[]>>();
+// 同じインスタンス内では計算中・計算済みの結果を共有する。データキャッシュの
+// 再計算 (REVALIDATE_SEC) が効くよう、1 時間たったらデータキャッシュから引き直す
+const memo = new Map<string, { at: number; legs: Promise<(string | null)[]> }>();
 const MEMO_MAX = 300;
+const MEMO_TTL_MS = 60 * 60 * 1000;
 
 export function getShapeLegs(points: ShapePoint[]): Promise<(string | null)[]> {
   const key = points
     .map((p) => `${p.stopId}@${p.lat.toFixed(5)},${p.lng.toFixed(5)}`)
     .join(">");
   const hit = memo.get(key);
-  if (hit) return hit;
-  const pending = cachedShapeLegs(points);
-  memo.set(key, pending);
-  pending.catch(() => memo.delete(key));
+  if (hit && Date.now() - hit.at < MEMO_TTL_MS) return hit.legs;
+  const entry = { at: Date.now(), legs: cachedShapeLegs(points) };
+  memo.delete(key);
+  memo.set(key, entry);
+  entry.legs.catch(() => {
+    if (memo.get(key) === entry) memo.delete(key);
+  });
   if (memo.size > MEMO_MAX) {
     const oldest = memo.keys().next().value;
     if (oldest !== undefined) memo.delete(oldest);
   }
-  return pending;
+  return entry.legs;
 }
 
 export { RoutesApiError };

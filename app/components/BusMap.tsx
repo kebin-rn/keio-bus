@@ -118,7 +118,12 @@ export default function BusMap({
       onClick={() => setFocusedSeq(null)}
       style={{ width: "100%", height: "100%" }}
     >
-      <SelectionCamera selected={selected} target={fitTarget} padding={fitPadding} />
+      <SelectionCamera
+        selectedId={selectedBusId}
+        bus={selected}
+        target={fitTarget}
+        padding={fitPadding}
+      />
 
       {geometry && selected && (
         <RouteOverlay
@@ -139,7 +144,8 @@ export default function BusMap({
         const bearing = bus["odpt:azimuth"] ?? 0;
         const isSelected = bus["@id"] === selectedBusId;
         // 便を選んでいる間は他のバスを薄くして、選んだ便と経路を見やすくする
-        const dimmed = selectedBusId !== null && !isSelected;
+        // (選んだバスが地図から消えたときは元に戻す)
+        const dimmed = selected !== null && !isSelected;
 
         return (
           <AdvancedMarker
@@ -238,8 +244,16 @@ function useTripStops(tripId: string | undefined): TripStops | null {
             scheduledSec: s.scheduledSec,
           })),
         };
-        remember(stopsCache, tripId, value);
-        if (alive) setState(value);
+        // サーバーが静的 GTFS (停留所の座標) や時刻表を読めなかったときの
+        // 不完全な停留所列は使い回さず、1 分後に取り直す
+        const complete =
+          data.scheduleAvailable !== false &&
+          value.stops.filter((s) => s.lat !== undefined && s.lng !== undefined).length >= 2;
+        if (complete) remember(stopsCache, tripId, value);
+        if (alive) {
+          setState(value);
+          if (!complete) timer = setTimeout(() => setRetry((n) => n + 1), 60_000);
+        }
       } catch {
         // 一時的な失敗は 30 秒後に再試行
         if (alive) timer = setTimeout(() => setRetry((n) => n + 1), 30_000);
@@ -324,11 +338,13 @@ function useGraceTimer(tripId: string | undefined): boolean {
 // 30 秒ごとの更新では動かさない (経路を見ている途中で地図が勝手に動かないように)
 
 function SelectionCamera({
-  selected,
+  selectedId,
+  bus,
   target,
   padding,
 }: {
-  selected: OdptBus | null;
+  selectedId: string | null;
+  bus: OdptBus | null; // 選んだバス (地図に表示中でなければ null)
   target: FitTarget | null;
   padding: MapPadding;
 }) {
@@ -343,20 +359,21 @@ function SelectionCamera({
     return () => listener.remove();
   }, [map]);
 
+  // 選択が変わったときだけ状態を戻す (選んだバスが更新で一時的に消えて
+  // 戻ってきても、選び直したことにはしない)
   useEffect(() => {
     if (!map) return;
-    const id = selected?.["@id"] ?? null;
-    if (id !== state.current.id) {
-      state.current = { id, fitted: false, userMoved: false };
-      if (!selected) return;
+    if (selectedId !== state.current.id) {
+      state.current = { id: selectedId, fitted: false, userMoved: false };
+      if (!selectedId) return;
       if (target) {
         fitToTarget(map, target, padding);
         state.current.fitted = true;
         return;
       }
       // 経路が届くまではバスの位置へ
-      const lat = selected["geo:lat"];
-      const lng = selected["geo:long"];
+      const lat = bus?.["geo:lat"];
+      const lng = bus?.["geo:long"];
       if (lat !== undefined && lng !== undefined) {
         map.panTo({ lat, lng });
         if ((map.getZoom() ?? 11) < 14) map.setZoom(14);
@@ -364,11 +381,11 @@ function SelectionCamera({
       return;
     }
     // 経路が後から届いた: 利用者がまだ地図を動かしていなければ合わせる
-    if (selected && target && !state.current.fitted && !state.current.userMoved) {
+    if (selectedId && target && !state.current.fitted && !state.current.userMoved) {
       fitToTarget(map, target, padding);
       state.current.fitted = true;
     }
-  }, [map, selected, target, padding]);
+  }, [map, selectedId, bus, target, padding]);
 
   return null;
 }
@@ -471,7 +488,12 @@ function RouteOverlay({
 
   return (
     <>
-      {showLines && geometry.runs.map((run, i) => <RouteLine key={i} run={run} />)}
+      {showLines &&
+        geometry.runs.map((run, i) => (
+          // 種類 (通過済み/これから × 道路/おおよそ) ごとに Polyline を分ける。
+          // setOptions は渡さなかった設定を消さないため、使い回すと点線が残る
+          <RouteLine key={`${run.part}-${run.road ? "road" : "approx"}-${i}`} run={run} />
+        ))}
 
       {geometry.dots.map((d) => (
         <AdvancedMarker

@@ -70,12 +70,16 @@ export async function GET(req: NextRequest) {
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";
-    // Routes API の一時的な失敗・設定の誤りは 503 (画面はおおよその経路で表示を続ける)。
-    // キーや API の有効化の誤りに気付けるよう、理由をログに残す
-    if (e instanceof RoutesApiError) console.warn(`[shape] ${message}`);
-    return NextResponse.json(
-      { available: true, error: message },
-      { status: e instanceof RoutesApiError ? 503 : 500 },
-    );
+    if (e instanceof RoutesApiError) {
+      // Routes API の一時的な失敗・設定の誤りは 503 (画面はおおよその経路で表示を続ける)。
+      // キーや API の有効化の誤りに気付けるよう理由はログに残し、Google の
+      // エラー本文 (プロジェクト番号などを含む) は返さない
+      console.warn(`[shape] ${message}`);
+      return NextResponse.json(
+        { available: true, error: "道路に沿った経路を取得できませんでした" },
+        { status: 503 },
+      );
+    }
+    return NextResponse.json({ available: true, error: message }, { status: 500 });
   }
 }
