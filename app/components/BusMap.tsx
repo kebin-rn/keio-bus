@@ -38,6 +38,9 @@ interface Props {
   // 選択した便の経路に表示範囲を合わせるときの余白。地図に重ねて表示する
   // バスの情報カードに隠れる部分を含める
   fitPadding?: MapPadding;
+  // 選んだ便の経路 (線・停留所の点・終点名) を表示するか。オフの間は経路の
+  // 情報 (/api/trip・/api/shape) も取得しない
+  showRoute?: boolean;
 }
 
 // 表示範囲を合わせるときに、点の周りに確保する画面上の余白 (px)
@@ -56,7 +59,7 @@ interface FitTarget {
 
 const KEIO_CENTER = { lat: 35.6638, lng: 139.5286 };
 const DEFAULT_FIT_PADDING: MapPadding = { top: 60, right: 60, bottom: 60, left: 60 };
-const ROUTE_COLOR = "#1a73e8";
+export const ROUTE_COLOR = "#1a73e8";
 const PASSED_COLOR = "#94a3b8";
 // 道路形状の到着を待つ時間。キャッシュ済みならすぐ届くので、その間に直線の
 // おおよその経路を一瞬描いてから差し替わる、というちらつきを避ける
@@ -68,13 +71,15 @@ export default function BusMap({
   onSelectBus,
   mapId,
   fitPadding = DEFAULT_FIT_PADDING,
+  showRoute = true,
 }: Props) {
   const selected = useMemo(
     () => buses.find((b) => b["@id"] === selectedBusId) || null,
     [buses, selectedBusId],
   );
 
-  const tripId = selected?.tripId;
+  // 経路表示がオフの間は便を渡さない (経路の情報を取得せず、何も描かない)
+  const tripId = showRoute ? selected?.tripId : undefined;
   const tripStops = useTripStops(tripId);
   const shape = useTripShapes(tripId);
   const graceOver = useGraceTimer(tripId);
@@ -144,7 +149,8 @@ export default function BusMap({
         const bearing = bus["odpt:azimuth"] ?? 0;
         const isSelected = bus["@id"] === selectedBusId;
         // 便を選んでいる間は他のバスを薄くして、選んだ便と経路を見やすくする
-        // (選んだバスが地図から消えたときは元に戻す)
+        // (経路表示がオフでも、選んだバスの目印として薄くする。選んだバスが
+        // 地図から消えたときは元に戻す)
         const dimmed = selected !== null && !isSelected;
 
         return (

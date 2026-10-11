@@ -5,7 +5,9 @@ import { APIProvider } from "@vis.gl/react-google-maps";
 import Link from "next/link";
 import BusMap, { type MapPadding } from "../components/BusMap";
 import MultiSelect from "../components/MultiSelect";
+import RouteToggle from "../components/RouteToggle";
 import { useBusData } from "../hooks/useBusData";
+import { useShowRoute } from "../hooks/useShowRoute";
 import {
   classifyDelay,
   shortenPatternId,
@@ -38,6 +40,7 @@ export default function MobilePage() {
   const [directionFilters, setDirectionFilters] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [showRoute, setShowRoute] = useShowRoute();
 
   const officeBuses = officeFilter
     ? buses.filter((b) => b.officeId === officeFilter)
@@ -133,11 +136,13 @@ export default function MobilePage() {
         routeFilters={routeFilters}
         directionFilters={directionFilters}
         searchQuery={searchQuery}
+        showRoute={showRoute}
         officeOptions={officeOptions}
         routeOptions={routeOptions}
         directionOptions={directionOptions}
         allCount={buses.length}
         filteredCount={officeBuses.length}
+        onChangeShowRoute={setShowRoute}
         onChangeOffice={(v) => {
           setOfficeFilter(v);
           setRouteFilters([]);
@@ -168,6 +173,7 @@ export default function MobilePage() {
               }}
               mapId={mapId}
               fitPadding={MAP_FIT_PADDING}
+              showRoute={showRoute}
             />
           </APIProvider>
         ) : (
@@ -306,11 +312,13 @@ function FilterBar({
   routeFilters,
   directionFilters,
   searchQuery,
+  showRoute,
   officeOptions,
   routeOptions,
   directionOptions,
   allCount,
   filteredCount,
+  onChangeShowRoute,
   onChangeOffice,
   onChangeRoutes,
   onChangeDirections,
@@ -320,11 +328,13 @@ function FilterBar({
   routeFilters: string[];
   directionFilters: string[];
   searchQuery: string;
+  showRoute: boolean;
   officeOptions: { id: string; name: string; count: number }[];
   routeOptions: { id: string; title: string; count: number }[];
   directionOptions: { name: string; count: number }[];
   allCount: number;
   filteredCount: number;
+  onChangeShowRoute: (on: boolean) => void;
   onChangeOffice: (v: string) => void;
   onChangeRoutes: (v: string[]) => void;
   onChangeDirections: (v: string[]) => void;
@@ -345,40 +355,48 @@ function FilterBar({
         borderBottom: "1px solid #1e293b",
       }}
     >
-      <div style={{ position: "relative" }}>
-        <input
-          type="search"
-          value={searchQuery}
-          onChange={(e) => onChangeSearch(e.target.value)}
-          placeholder="車番で検索 (例: 21303)"
-          inputMode="search"
-          autoComplete="off"
-          aria-label="車番で検索"
-          style={{
-            ...selectStyle,
-            paddingRight: 32,
-          }}
-        />
-        {searchQuery && (
-          <button
-            onClick={() => onChangeSearch("")}
-            aria-label="検索条件をクリア"
+      {/* 検索欄の右に経路表示のスイッチ (行を増やさず、地図の高さを保つ) */}
+      <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(e) => onChangeSearch(e.target.value)}
+            placeholder="車番で検索 (例: 21303)"
+            inputMode="search"
+            autoComplete="off"
+            aria-label="車番で検索"
             style={{
-              position: "absolute",
-              right: 4,
-              top: "50%",
-              transform: "translateY(-50%)",
-              width: 28,
-              height: 28,
-              color: "#94a3b8",
-              fontSize: 16,
-              lineHeight: 1,
-              borderRadius: 4,
+              ...selectStyle,
+              paddingRight: 32,
             }}
-          >
-            ×
-          </button>
-        )}
+          />
+          {searchQuery && (
+            <button
+              onClick={() => onChangeSearch("")}
+              aria-label="検索条件をクリア"
+              style={{
+                position: "absolute",
+                right: 4,
+                top: "50%",
+                transform: "translateY(-50%)",
+                width: 28,
+                height: 28,
+                color: "#94a3b8",
+                fontSize: 16,
+                lineHeight: 1,
+                borderRadius: 4,
+              }}
+            >
+              ×
+            </button>
+          )}
+        </div>
+        <RouteToggle
+          checked={showRoute}
+          onChange={onChangeShowRoute}
+          style={{ height: "auto", borderRadius: 8 }}
+        />
       </div>
       <div
         style={{

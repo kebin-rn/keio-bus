@@ -6,7 +6,9 @@ import { APIProvider } from "@vis.gl/react-google-maps";
 import BusMap, { type MapPadding } from "./components/BusMap";
 import BusInfoPanel from "./components/BusInfoPanel";
 import MultiSelect from "./components/MultiSelect";
+import RouteToggle from "./components/RouteToggle";
 import { useBusData } from "./hooks/useBusData";
+import { useShowRoute } from "./hooks/useShowRoute";
 import { classifyDelay, shortenPatternId, shortenStopId } from "./lib/format";
 import type { OdptBus, OdptBusroutePattern } from "./types/odpt";
 
@@ -44,6 +46,7 @@ export default function Page() {
   const [routeFilters, setRouteFilters] = useState<string[]>([]);
   const [directionFilters, setDirectionFilters] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [showRoute, setShowRoute] = useShowRoute();
 
   const officeBuses = officeFilter
     ? buses.filter((b) => b.officeId === officeFilter)
@@ -144,9 +147,11 @@ export default function Page() {
           routeFilters={routeFilters}
           directionFilters={directionFilters}
           searchQuery={searchQuery}
+          showRoute={showRoute}
           officeOptions={officeOptions}
           routeOptions={routeOptions}
           directionOptions={directionOptions}
+          onChangeShowRoute={setShowRoute}
           onChangeOffice={(v) => {
             setOfficeFilter(v);
             setRouteFilters([]);
@@ -183,6 +188,7 @@ export default function Page() {
                 onSelectBus={setSelectedBusId}
                 mapId={mapId}
                 fitPadding={MAP_FIT_PADDING}
+                showRoute={showRoute}
               />
             </APIProvider>
             {selectedBus && (
@@ -317,9 +323,11 @@ function FilterToolbar({
   routeFilters,
   directionFilters,
   searchQuery,
+  showRoute,
   officeOptions,
   routeOptions,
   directionOptions,
+  onChangeShowRoute,
   onChangeOffice,
   onChangeRoutes,
   onChangeDirections,
@@ -331,9 +339,11 @@ function FilterToolbar({
   routeFilters: string[];
   directionFilters: string[];
   searchQuery: string;
+  showRoute: boolean;
   officeOptions: { id: string; name: string; count: number }[];
   routeOptions: { id: string; title: string; count: number }[];
   directionOptions: { name: string; count: number }[];
+  onChangeShowRoute: (on: boolean) => void;
   onChangeOffice: (v: string) => void;
   onChangeRoutes: (v: string[]) => void;
   onChangeDirections: (v: string[]) => void;
@@ -436,6 +446,12 @@ function FilterToolbar({
           containerStyle={{ flex: "0 1 220px", minWidth: 160, maxWidth: 260 }}
         />
       )}
+      {/* 絞り込みとは別の表示設定なので右端に置く (方面の表示有無で位置が動かない) */}
+      <RouteToggle
+        checked={showRoute}
+        onChange={onChangeShowRoute}
+        style={{ marginLeft: "auto" }}
+      />
     </div>
   );
 }
