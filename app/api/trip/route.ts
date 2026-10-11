@@ -11,6 +11,8 @@ export interface TripStop {
   seq: number;
   stopId: string;
   name: string | null; // 静的 GTFS に無い停留所は null (画面側で「停留所名不明」)
+  lat?: number; // 地図の経路表示用 (静的 GTFS に無い停留所は無し)
+  lng?: number;
   scheduledSec?: number; // 定刻 (0時起点の秒、24時超えあり)
   predictedSec?: number; // 到着予想 = 定刻 + 便の現在の遅延 (未通過の停留所のみ)
   state: "passed" | "current" | "upcoming";
@@ -94,10 +96,13 @@ export async function GET(req: NextRequest) {
             ? "current"
             : "upcoming";
       const scheduledSec = schedule?.get(scheduleKey(tripId, s.stopSequence));
+      const st = stat?.stops[s.stopId];
       return {
         seq: s.stopSequence,
         stopId: s.stopId,
-        name: stat?.stops[s.stopId]?.name ?? null,
+        name: st?.name ?? null,
+        lat: st?.lat,
+        lng: st?.lng,
         scheduledSec,
         predictedSec:
           state !== "passed" && scheduledSec !== undefined

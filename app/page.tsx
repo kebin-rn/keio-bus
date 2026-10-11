@@ -3,11 +3,25 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { APIProvider } from "@vis.gl/react-google-maps";
-import BusMap from "./components/BusMap";
+import BusMap, { type MapPadding } from "./components/BusMap";
 import BusInfoPanel from "./components/BusInfoPanel";
 import MultiSelect from "./components/MultiSelect";
 import { useBusData } from "./hooks/useBusData";
-import { shortenPatternId } from "./lib/format";
+import { classifyDelay, shortenPatternId, shortenStopId } from "./lib/format";
+import type { OdptBus, OdptBusroutePattern } from "./types/odpt";
+
+// 選択中のバスの情報カード (地図の左上) の位置と幅
+const INFO_CARD_TOP = 60;
+const INFO_CARD_LEFT = 10;
+const INFO_CARD_WIDTH = 280;
+// 便を選んだときに経路へ表示範囲を合わせる余白。経路が情報カードに隠れないよう、
+// 左側はカードの幅の分を空ける
+const MAP_FIT_PADDING: MapPadding = {
+  top: 60,
+  right: 60,
+  bottom: 60,
+  left: INFO_CARD_LEFT + INFO_CARD_WIDTH + 30,
+};
 
 export default function Page() {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "";
@@ -102,6 +116,10 @@ export default function Page() {
       )
     : directedBuses;
 
+  // 地図に表示中のバスから探す (検索などで地図から消えたらカードも閉じる)
+  const selectedBus =
+    displayedBuses.find((b) => b["@id"] === selectedBusId) ?? null;
+
   return (
     <div
       style={{
@@ -161,13 +179,20 @@ export default function Page() {
             <APIProvider apiKey={apiKey}>
               <BusMap
                 buses={displayedBuses}
-                patternMap={patternMap}
-                stopMap={stopMap}
                 selectedBusId={selectedBusId}
                 onSelectBus={setSelectedBusId}
                 mapId={mapId}
+                fitPadding={MAP_FIT_PADDING}
               />
             </APIProvider>
+            {selectedBus && (
+              <SelectedBusCard
+                bus={selectedBus}
+                patternMap={patternMap}
+                stopMap={stopMap}
+                onClose={() => setSelectedBusId(null)}
+              />
+            )}
             {loading && <LoadingOverlay />}
           </div>
           <BusInfoPanel
@@ -453,6 +478,113 @@ function ToolbarSelect({
         </option>
       ))}
     </select>
+  );
+}
+
+// 選択中のバスの情報。バスの真上に吹き出しで出すと、その先の経路が隠れて
+// しまうため、地図の左上に固定して表示する
+function SelectedBusCard({
+  bus,
+  patternMap,
+  stopMap,
+  onClose,
+}: {
+  bus: OdptBus;
+  patternMap: Record<string, OdptBusroutePattern>;
+  stopMap: Record<string, { title: string; lat?: number; lng?: number }>;
+  onClose: () => void;
+}) {
+  const delay = classifyDelay(bus["odpt:delay"]);
+  const pattern = bus["odpt:busroutePattern"]
+    ? patternMap[bus["odpt:busroutePattern"]]
+    : undefined;
+  const from = bus["odpt:fromBusstopPole"];
+  const to = bus["odpt:toBusstopPole"];
+  const fromName = from ? stopMap[from]?.title || shortenStopId(from) : "—";
+  const toName = to ? stopMap[to]?.title || shortenStopId(to) : "—";
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: INFO_CARD_TOP,
+        left: INFO_CARD_LEFT,
+        width: INFO_CARD_WIDTH,
+        zIndex: 5,
+        padding: "12px 14px",
+        background: "#ffffff",
+        color: "#0f172a",
+        borderRadius: 8,
+        boxShadow: "0 2px 7px 1px rgba(0,0,0,0.3)",
+      }}
+    >
+      <button
+        onClick={onClose}
+        aria-label="閉じる"
+        style={{
+          position: "absolute",
+          top: 6,
+          right: 6,
+          width: 28,
+          height: 28,
+          borderRadius: 4,
+          color: "#64748b",
+          fontSize: 18,
+          lineHeight: 1,
+        }}
+      >
+        ×
+      </button>
+      <div style={{ fontWeight: 700, fontSize: 14, paddingRight: 28 }}>
+        {pattern?.["dc:title"] || "系統情報なし"}
+      </div>
+      {bus.tripHeadsign && (
+        <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>
+          {bus.tripHeadsign} 行
+        </div>
+      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "8px 0" }}>
+        <span
+          style={{
+            display: "inline-block",
+            padding: "2px 8px",
+            borderRadius: 999,
+            background: delay.color,
+            color: "#fff",
+            fontSize: 12,
+            fontWeight: 600,
+          }}
+        >
+          {delay.label}
+        </span>
+        {bus["odpt:vehicleNumber"] && (
+          <span style={{ fontSize: 12, color: "#475569" }}>
+            #{bus["odpt:vehicleNumber"]}
+          </span>
+        )}
+      </div>
+      <div style={{ fontSize: 12, lineHeight: 1.6, color: "#334155" }}>
+        <div>
+          <span style={{ color: "#64748b" }}>直前: </span>
+          {fromName}
+        </div>
+        <div>
+          <span style={{ color: "#64748b" }}>次の停留所: </span>
+          <strong>{toName}</strong>
+        </div>
+        {bus["odpt:speed"] !== undefined && (
+          <div>
+            <span style={{ color: "#64748b" }}>速度: </span>
+            {bus["odpt:speed"]} km/h
+          </div>
+        )}
+        {bus["dc:date"] && (
+          <div style={{ marginTop: 4, color: "#94a3b8" }}>
+            {new Date(bus["dc:date"]).toLocaleTimeString("ja-JP")} 時点
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

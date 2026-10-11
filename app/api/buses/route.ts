@@ -83,6 +83,19 @@ export async function GET() {
         ? (staticTrip?.officeId ?? hachikoOfficeId)
         : staticTrip?.officeId;
 
+      // 便の進行状況。遅延表示の補正と地図の経路表示 (通過済み/これからの境目) に
+      // 使う。接近ボード・便詳細と同じ tripProgress で求めて表示を揃える
+      const progress =
+        tripId !== undefined
+          ? tripProgress(v, stopTimesByTrip.get(tripId) ?? [], rtTrip?.delay, (sid) => {
+              const st = stat?.stops[sid];
+              return st ? { lat: st.lat, lng: st.lng } : undefined;
+            })
+          : null;
+      // 経路表示は trip_update に停留所列がある便のみ (ハチ公バスは停留所情報を扱わない)
+      const hasRoute =
+        !isHachiko && tripId !== undefined && (stopTimesByTrip.get(tripId)?.length ?? 0) > 0;
+
       if (isHachiko) hachikoActive = true;
       if (routeId && !isHachiko) usedRouteIds.add(routeId);
       if (nextStopId) usedStopIds.add(nextStopId);
@@ -117,15 +130,20 @@ export async function GET() {
         // 始発で発車待ちの便の早着分 (負の遅延) を「早発」と出さないよう、
         // 接近ボードと同じ補正をかける
         "odpt:delay":
-          rtTrip?.delay === undefined || tripId === undefined
+          rtTrip?.delay === undefined || progress === null
             ? rtTrip?.delay
-            : tripProgress(v, stopTimesByTrip.get(tripId) ?? [], rtTrip.delay, (id) => {
-                const st = stat?.stops[id];
-                return st ? { lat: st.lat, lng: st.lng } : undefined;
-              }).effectiveDelay,
+            : progress.effectiveDelay,
         "odpt:vehicleNumber": vehicleNumber,
         officeId,
         tripHeadsign: isHachiko ? undefined : staticTrip?.headsign,
+        ...(hasRoute && progress
+          ? {
+              tripId,
+              stopSeq: progress.effectiveSeq,
+              beforeDeparture: progress.beforeDeparture,
+              stopped: progress.stopped,
+            }
+          : {}),
       });
     }
 

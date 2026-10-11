@@ -22,6 +22,11 @@ export interface OdptBus {
   "odpt:terminalBusstopPole"?: string;
   officeId?: string;
   tripHeadsign?: string;
+  // 地図の経路表示用。停留所情報を扱わない便 (ハチ公バス) には付けない
+  tripId?: string;
+  stopSeq?: number; // 便の停留所列上の現在位置 (接近ボード・便詳細と同じ基準)
+  beforeDeparture?: boolean; // 始発をまだ発車していない
+  stopped?: boolean; // stopSeq の停留所に停車中 (false なら接近中)
 }
 
 export interface OdptBusroutePatternStop {

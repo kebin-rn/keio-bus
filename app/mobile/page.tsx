@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { APIProvider } from "@vis.gl/react-google-maps";
 import Link from "next/link";
-import BusMap from "../components/BusMap";
+import BusMap, { type MapPadding } from "../components/BusMap";
 import MultiSelect from "../components/MultiSelect";
 import { useBusData } from "../hooks/useBusData";
 import {
@@ -12,6 +12,9 @@ import {
   shortenStopId,
 } from "../lib/format";
 import type { OdptBus } from "../types/odpt";
+
+// 便を選んだときに経路へ表示範囲を合わせる余白。下側は詳細カードに隠れる分を空ける
+const MAP_FIT_PADDING: MapPadding = { top: 50, right: 40, bottom: 200, left: 40 };
 
 export default function MobilePage() {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "";
@@ -158,15 +161,13 @@ export default function MobilePage() {
           <APIProvider apiKey={apiKey}>
             <BusMap
               buses={displayedBuses}
-              patternMap={patternMap}
-              stopMap={stopMap}
               selectedBusId={selectedBusId}
               onSelectBus={(id) => {
                 setSelectedBusId(id);
                 if (id) setSheetOpen(false);
               }}
               mapId={mapId}
-              hideInfoWindow
+              fitPadding={MAP_FIT_PADDING}
             />
           </APIProvider>
         ) : (

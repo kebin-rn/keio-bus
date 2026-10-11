@@ -1,15 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  classifyDelay,
-  formatEtaSec,
-  minutesFromNowJst,
-} from "../lib/format";
+import { classifyDelay, formatEtaSec } from "../lib/format";
+import { busStatusText, relativeArrivalLabel } from "../lib/stopStatus";
 
 const REFRESH_MS = 20_000;
-// 接近ボードの「まもなく」と同じ基準 (車載器→ODPT の転送遅延を見込んで 1 停留所前から)
-const IMMINENT_STOPS = 1;
 
 interface TripStop {
   seq: number;
@@ -370,13 +365,10 @@ export default function TripDetailSheet({
                 live={live}
                 stopsAhead={trip ? s.seq - trip.currentStopSequence : Infinity}
                 beforeDeparture={trip?.beforeDeparture ?? false}
-                busStatusText={
-                  trip?.beforeDeparture
-                    ? "発車前"
-                    : trip?.vehicleStatus === "stopped"
-                      ? "停車中"
-                      : "接近中"
-                }
+                busStatusText={busStatusText(
+                  trip?.beforeDeparture ?? false,
+                  trip?.vehicleStatus === "stopped",
+                )}
               />
             ))
           )}
@@ -426,18 +418,15 @@ function StopRow({
   const lineColor = "#334155";
   const doneColor = "#475569";
 
-  // 未通過の停留所の相対表示。「まもなく」は接近ボードと同じく停留所数で判定し
-  // (始発で発車を待っている間は除く)、それ以外は予想時刻までの分数を出す
-  // (予想時刻を過ぎていれば時刻のみ表示)
-  let relative: string | null = null;
-  if (live && !passed && !busHere) {
-    if (!beforeDeparture && stopsAhead <= IMMINENT_STOPS) {
-      relative = "まもなく";
-    } else if (stop.predictedSec !== undefined) {
-      const mins = minutesFromNowJst(stop.predictedSec);
-      if (mins >= 1) relative = `約${mins}分後`;
-    }
-  }
+  // 未通過の停留所の相対表示 (地図の経路表示と共通の判定)
+  const relative =
+    live && !passed && !busHere
+      ? relativeArrivalLabel({
+          stopsAhead,
+          beforeDeparture,
+          predictedSec: stop.predictedSec,
+        })
+      : null;
 
   return (
     <div
