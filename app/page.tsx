@@ -1,15 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { APIProvider } from "@vis.gl/react-google-maps";
-import BusMap, { type MapPadding } from "./components/BusMap";
+import BusMap, { type MapPadding, type StopFocus } from "./components/BusMap";
 import BusInfoPanel from "./components/BusInfoPanel";
 import MultiSelect from "./components/MultiSelect";
 import RouteToggle from "./components/RouteToggle";
+import TripTimeline from "./components/TripTimeline";
 import { useBusData } from "./hooks/useBusData";
 import { useShowRoute } from "./hooks/useShowRoute";
+import { useStoredBoolean } from "./hooks/useStoredBoolean";
+import { useTripStops, type TripStops } from "./hooks/useTripStops";
 import { classifyDelay, shortenPatternId, shortenStopId } from "./lib/format";
+import { busPositionText, deriveTimeline } from "./lib/stopStatus";
 import type { OdptBus, OdptBusroutePattern } from "./types/odpt";
 
 // 選択中のバスの情報カード (地図の左上) の位置と幅
@@ -47,6 +51,12 @@ export default function Page() {
   const [directionFilters, setDirectionFilters] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [showRoute, setShowRoute] = useShowRoute();
+  // 情報カードの「停留所ごとの到着予想」の開閉 (既定は開く。ブラウザに保存)
+  const [arrivalsOpen, setArrivalsOpen] = useStoredBoolean("keio-bus:arrivals-open", true);
+  // 選んでいる停留所 (到着予想の一覧の行と地図の点で共有)。便ごとに持ち、
+  // 別のバスを選んだら解除する
+  const [stopFocus, setStopFocus] = useState<(StopFocus & { tripId: string }) | null>(null);
+  useEffect(() => setStopFocus(null), [selectedBusId]);
 
   const officeBuses = officeFilter
     ? buses.filter((b) => b.officeId === officeFilter)
@@ -122,6 +132,11 @@ export default function Page() {
   // 地図に表示中のバスから探す (検索などで地図から消えたらカードも閉じる)
   const selectedBus =
     displayedBuses.find((b) => b["@id"] === selectedBusId) ?? null;
+  const tripId = selectedBus?.tripId;
+  // 到着予想の一覧は便の停留所列から作る。一覧を開いているか、地図に経路を
+  // 出しているときだけ取得する (地図と同じ便なら 1 回の取得を共有する)
+  const tripStops = useTripStops(tripId && (arrivalsOpen || showRoute) ? tripId : undefined);
+  const focus = stopFocus && stopFocus.tripId === tripId ? stopFocus : null;
 
   return (
     <div
@@ -145,7 +160,10 @@ export default function Page() {
           apiKey ? (
             <RouteToggle
               checked={showRoute}
-              onChange={setShowRoute}
+              onChange={(on) => {
+                setShowRoute(on);
+                setStopFocus(null);
+              }}
               style={{ height: "auto", padding: "6px 10px", fontSize: 12 }}
             />
           ) : null
@@ -199,6 +217,8 @@ export default function Page() {
                 mapId={mapId}
                 fitPadding={MAP_FIT_PADDING}
                 showRoute={showRoute}
+                stopFocus={focus}
+                onStopFocusChange={(f) => setStopFocus(f && tripId ? { ...f, tripId } : null)}
               />
             </APIProvider>
             {selectedBus && (
@@ -207,6 +227,24 @@ export default function Page() {
                 patternMap={patternMap}
                 stopMap={stopMap}
                 onClose={() => setSelectedBusId(null)}
+                arrivals={
+                  tripId && selectedBus.stopSeq !== undefined
+                    ? {
+                        open: arrivalsOpen,
+                        onToggle: () => setArrivalsOpen(!arrivalsOpen),
+                        stops: tripStops.data,
+                        failed: tripStops.failed,
+                        selectable: showRoute,
+                        focus,
+                        onSelectStop: (seq) =>
+                          setStopFocus((cur) =>
+                            cur && cur.tripId === tripId && cur.seq === seq
+                              ? null
+                              : { tripId, seq, from: "list" },
+                          ),
+                      }
+                    : null
+                }
               />
             )}
             {loading && <LoadingOverlay />}
@@ -501,26 +539,48 @@ function ToolbarSelect({
 }
 
 // 選択中のバスの情報。バスの真上に吹き出しで出すと、その先の経路が隠れて
-// しまうため、地図の左上に固定して表示する
+// しまうため、地図の左上に固定して表示する。下に「停留所ごとの到着予想」の一覧
+// (接近案内の便詳細と同じ表示) を出す。カードの列は表示範囲を合わせるときの余白
+// (MAP_FIT_PADDING) で空けてあるので、一覧を伸ばしても経路は隠れない
 function SelectedBusCard({
   bus,
   patternMap,
   stopMap,
   onClose,
+  arrivals,
 }: {
   bus: OdptBus;
   patternMap: Record<string, OdptBusroutePattern>;
   stopMap: Record<string, { title: string; lat?: number; lng?: number }>;
   onClose: () => void;
+  // 到着予想の一覧 (停留所情報を扱わない便では null)
+  arrivals: {
+    open: boolean;
+    onToggle: () => void;
+    stops: TripStops | null;
+    failed: boolean;
+    selectable: boolean; // 経路表示がオン (一覧の行と地図の点を連動させる)
+    focus: StopFocus | null;
+    onSelectStop: (seq: number) => void;
+  } | null;
 }) {
   const delay = classifyDelay(bus["odpt:delay"]);
   const pattern = bus["odpt:busroutePattern"]
     ? patternMap[bus["odpt:busroutePattern"]]
     : undefined;
-  const from = bus["odpt:fromBusstopPole"];
   const to = bus["odpt:toBusstopPole"];
-  const fromName = from ? stopMap[from]?.title || shortenStopId(from) : "—";
   const toName = to ? stopMap[to]?.title || shortenStopId(to) : "—";
+
+  // 停留所ごとの状況と到着予想。地図の経路と同じく、バスの現在位置と遅延は
+  // 30 秒ごとに更新される運行情報 (/api/buses) のものを使う
+  const beforeDeparture = bus.beforeDeparture ?? false;
+  const stopped = bus.stopped ?? false;
+  const timeline =
+    arrivals?.stops && bus.stopSeq !== undefined
+      ? deriveTimeline(arrivals.stops.stops, bus.stopSeq, bus["odpt:delay"] ?? 0)
+      : null;
+  const current = timeline?.find((s) => s.state === "current");
+  const remaining = timeline ? timeline.filter((s) => s.state !== "passed").length : 0;
 
   return (
     <div
@@ -529,80 +589,135 @@ function SelectedBusCard({
         top: INFO_CARD_TOP,
         left: INFO_CARD_LEFT,
         width: INFO_CARD_WIDTH,
+        // 下に Google のロゴが見える程度の余白を残す
+        maxHeight: "calc(100% - 100px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
         zIndex: 5,
-        padding: "12px 14px",
         background: "#ffffff",
         color: "#0f172a",
         borderRadius: 8,
         boxShadow: "0 2px 7px 1px rgba(0,0,0,0.3)",
       }}
     >
-      <button
-        onClick={onClose}
-        aria-label="閉じる"
-        style={{
-          position: "absolute",
-          top: 6,
-          right: 6,
-          width: 28,
-          height: 28,
-          borderRadius: 4,
-          color: "#64748b",
-          fontSize: 18,
-          lineHeight: 1,
-        }}
-      >
-        ×
-      </button>
-      <div style={{ fontWeight: 700, fontSize: 14, paddingRight: 28 }}>
-        {pattern?.["dc:title"] || "系統情報なし"}
-      </div>
-      {bus.tripHeadsign && (
-        <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>
-          {bus.tripHeadsign} 行
-        </div>
-      )}
-      <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "8px 0" }}>
-        <span
+      <div style={{ flexShrink: 0, padding: "12px 14px" }}>
+        <button
+          onClick={onClose}
+          aria-label="閉じる"
           style={{
-            display: "inline-block",
-            padding: "2px 8px",
-            borderRadius: 999,
-            background: delay.color,
-            color: "#fff",
-            fontSize: 12,
-            fontWeight: 600,
+            position: "absolute",
+            top: 6,
+            right: 6,
+            width: 28,
+            height: 28,
+            borderRadius: 4,
+            color: "#64748b",
+            fontSize: 18,
+            lineHeight: 1,
           }}
         >
-          {delay.label}
-        </span>
-        {bus["odpt:vehicleNumber"] && (
-          <span style={{ fontSize: 12, color: "#475569" }}>
-            #{bus["odpt:vehicleNumber"]}
+          ×
+        </button>
+        <div style={{ fontWeight: 700, fontSize: 14, paddingRight: 28 }}>
+          {pattern?.["dc:title"] || "系統情報なし"}
+        </div>
+        {bus.tripHeadsign && (
+          <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>
+            {bus.tripHeadsign} 行
+          </div>
+        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "8px 0" }}>
+          <span
+            style={{
+              display: "inline-block",
+              padding: "2px 8px",
+              borderRadius: 999,
+              background: delay.color,
+              color: "#fff",
+              fontSize: 12,
+              fontWeight: 600,
+            }}
+          >
+            {delay.label}
           </span>
-        )}
-      </div>
-      <div style={{ fontSize: 12, lineHeight: 1.6, color: "#334155" }}>
-        <div>
-          <span style={{ color: "#64748b" }}>直前: </span>
-          {fromName}
+          {bus["odpt:vehicleNumber"] && (
+            <span style={{ fontSize: 12, color: "#475569" }}>
+              #{bus["odpt:vehicleNumber"]}
+            </span>
+          )}
         </div>
-        <div>
-          <span style={{ color: "#64748b" }}>次の停留所: </span>
-          <strong>{toName}</strong>
+        <div style={{ fontSize: 12, lineHeight: 1.6, color: "#334155" }}>
+          {current ? (
+            // 一覧・地図と同じ基準の現在位置 (便詳細シートと同じ言い方)
+            <div>
+              🚌 現在: <strong>{busPositionText(current.name, beforeDeparture, stopped)}</strong>
+            </div>
+          ) : (
+            <div>
+              <span style={{ color: "#64748b" }}>次の停留所: </span>
+              <strong>{toName}</strong>
+            </div>
+          )}
+          {bus["odpt:speed"] !== undefined && (
+            <div>
+              <span style={{ color: "#64748b" }}>速度: </span>
+              {bus["odpt:speed"]} km/h
+            </div>
+          )}
+          {bus["dc:date"] && (
+            <div style={{ marginTop: 4, color: "#94a3b8" }}>
+              {new Date(bus["dc:date"]).toLocaleTimeString("ja-JP")} 時点
+            </div>
+          )}
         </div>
-        {bus["odpt:speed"] !== undefined && (
-          <div>
-            <span style={{ color: "#64748b" }}>速度: </span>
-            {bus["odpt:speed"]} km/h
-          </div>
-        )}
-        {bus["dc:date"] && (
-          <div style={{ marginTop: 4, color: "#94a3b8" }}>
-            {new Date(bus["dc:date"]).toLocaleTimeString("ja-JP")} 時点
-          </div>
-        )}
       </div>
+
+      {arrivals && bus.stopSeq !== undefined && (
+        <>
+          <button
+            type="button"
+            aria-expanded={arrivals.open}
+            aria-controls="arrivals-list"
+            onClick={arrivals.onToggle}
+            style={{
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              height: 36,
+              padding: "0 14px",
+              borderTop: "1px solid #e2e8f0",
+              textAlign: "left",
+            }}
+          >
+            <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: "#0f172a" }}>
+              停留所ごとの到着予想
+            </span>
+            {timeline && remaining > 0 && (
+              <span style={{ fontSize: 12, color: "#64748b" }}>残り {remaining} 停留所</span>
+            )}
+            <span aria-hidden="true" style={{ fontSize: 12, color: "#64748b" }}>
+              {arrivals.open ? "▲" : "▼"}
+            </span>
+          </button>
+          {arrivals.open && (
+            <TripTimeline
+              key={bus.tripId}
+              id="arrivals-list"
+              stops={timeline}
+              status={timeline ? "ready" : arrivals.failed ? "error" : "loading"}
+              currentSeq={bus.stopSeq}
+              beforeDeparture={beforeDeparture}
+              stopped={stopped}
+              selectable={arrivals.selectable}
+              focusedSeq={arrivals.focus?.seq ?? null}
+              focusFrom={arrivals.focus?.from ?? null}
+              onSelectStop={arrivals.onSelectStop}
+            />
+          )}
+        </>
+      )}
     </div>
   );
 }

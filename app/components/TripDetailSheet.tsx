@@ -1,19 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { classifyDelay, formatEtaSec } from "../lib/format";
-import { busStatusText, relativeArrivalLabel } from "../lib/stopStatus";
+import { classifyDelay } from "../lib/format";
+import {
+  busPositionText,
+  busStatusText,
+  type TimelineStop,
+} from "../lib/stopStatus";
+import TripStopRow from "./TripStopRow";
 
 const REFRESH_MS = 20_000;
-
-interface TripStop {
-  seq: number;
-  stopId: string;
-  name: string | null;
-  scheduledSec?: number;
-  predictedSec?: number;
-  state: "passed" | "current" | "upcoming";
-}
 
 interface TripDetail {
   tripId: string;
@@ -27,7 +23,7 @@ interface TripDetail {
   vehicleStatus: "stopped" | "approaching";
 }
 
-// 接近ボードで選んだ便の詳細 (全停留所・到着予想) を表示するシート。
+// 接近ボード・スマホ版の地図で選んだ便の詳細 (全停留所・到着予想) を表示するシート。
 // 画面下から出るシートで、PC では幅 560px に収めて中央に寄せる。
 export default function TripDetailSheet({
   tripId,
@@ -41,7 +37,7 @@ export default function TripDetailSheet({
   onClose: () => void;
 }) {
   const [trip, setTrip] = useState<TripDetail | null>(null);
-  const [stops, setStops] = useState<TripStop[]>([]);
+  const [stops, setStops] = useState<TimelineStop[]>([]);
   const [error, setError] = useState<string | null>(null);
   // 便の運行が終わった (API が 404)。以後は更新を止め、現在位置・カウントダウンを出さない
   const [ended, setEnded] = useState(false);
@@ -174,17 +170,10 @@ export default function TripDetailSheet({
   const remaining = stops.filter((s) => s.state !== "passed").length;
   const live = !ended && trip !== null;
 
-  let positionText: string | null = null;
-  if (live && current) {
-    const name = current.name ?? "停留所名不明";
-    positionText = trip.beforeDeparture
-      ? trip.vehicleStatus === "stopped"
-        ? `始発 ${name} で発車待ち`
-        : `始発 ${name} に向かっています`
-      : trip.vehicleStatus === "stopped"
-        ? `${name} に停車中`
-        : `${name} に接近中`;
-  }
+  const positionText =
+    live && current
+      ? busPositionText(current.name, trip.beforeDeparture, trip.vehicleStatus === "stopped")
+      : null;
 
   return (
     <div
@@ -356,7 +345,7 @@ export default function TripDetailSheet({
             </div>
           ) : (
             stops.map((s, i) => (
-              <StopRow
+              <TripStopRow
                 key={s.seq}
                 stop={s}
                 isFirst={i === 0}
@@ -387,175 +376,6 @@ export default function TripDetailSheet({
             {`${lastUpdated.toLocaleTimeString("ja-JP")} 更新 (20秒毎)`}
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-function StopRow({
-  stop,
-  isFirst,
-  isLast,
-  highlighted,
-  live,
-  stopsAhead,
-  beforeDeparture,
-  busStatusText,
-}: {
-  stop: TripStop;
-  isFirst: boolean;
-  isLast: boolean;
-  highlighted: boolean;
-  live: boolean; // 運行中の最新情報か (終了後は現在位置・カウントダウンを出さない)
-  stopsAhead: number; // バスの現在位置から何停留所先か
-  beforeDeparture: boolean;
-  busStatusText: string;
-}) {
-  const passed = stop.state === "passed";
-  const busHere = live && stop.state === "current";
-  const scheduled = formatEtaSec(stop.scheduledSec);
-  const predicted = formatEtaSec(stop.predictedSec);
-  const lineColor = "#334155";
-  const doneColor = "#475569";
-
-  // 未通過の停留所の相対表示 (地図の経路表示と共通の判定)
-  const relative =
-    live && !passed && !busHere
-      ? relativeArrivalLabel({
-          stopsAhead,
-          beforeDeparture,
-          predictedSec: stop.predictedSec,
-        })
-      : null;
-
-  return (
-    <div
-      data-state={stop.state}
-      style={{
-        display: "grid",
-        gridTemplateColumns: "64px 24px 1fr",
-        alignItems: "stretch",
-        minHeight: 44,
-        padding: "0 16px",
-        background: highlighted ? "rgba(245, 158, 11, 0.12)" : "transparent",
-        borderLeft: highlighted ? "3px solid #f59e0b" : "3px solid transparent",
-      }}
-    >
-      {/* 時刻列 */}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-          alignItems: "flex-end",
-          paddingRight: 8,
-          fontVariantNumeric: "tabular-nums",
-        }}
-      >
-        {passed || !live ? (
-          <span style={{ fontSize: 12, color: passed ? doneColor : "#94a3b8" }}>
-            {scheduled ?? "—"}
-          </span>
-        ) : (
-          <>
-            <span style={{ fontSize: 14, fontWeight: 700, color: "#f1f5f9" }}>
-              {predicted ?? "—"}
-            </span>
-            {scheduled && predicted && scheduled !== predicted && (
-              <span style={{ fontSize: 10, color: "#64748b" }}>定刻 {scheduled}</span>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* 路線図の縦線とマーカー */}
-      <div style={{ position: "relative" }}>
-        <div
-          style={{
-            position: "absolute",
-            left: "50%",
-            top: isFirst ? "50%" : 0,
-            bottom: isLast ? "50%" : 0,
-            width: 2,
-            transform: "translateX(-50%)",
-            background: passed ? doneColor : lineColor,
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            left: "50%",
-            top: "50%",
-            transform: "translate(-50%, -50%)",
-            width: busHere ? 20 : highlighted ? 14 : 10,
-            height: busHere ? 20 : highlighted ? 14 : 10,
-            borderRadius: "50%",
-            background: busHere
-              ? "#f59e0b"
-              : passed
-                ? doneColor
-                : highlighted
-                  ? "#f59e0b"
-                  : "#0f172a",
-            border: busHere || passed ? "none" : `2px solid ${highlighted ? "#f59e0b" : "#94a3b8"}`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 11,
-          }}
-        >
-          {busHere ? "🚌" : null}
-        </div>
-      </div>
-
-      {/* 停留所名 */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 8,
-          paddingLeft: 8,
-          minWidth: 0,
-        }}
-      >
-        <span
-          style={{
-            fontSize: 14,
-            fontWeight: busHere || highlighted ? 700 : 400,
-            color: passed || stop.name === null ? doneColor : "#f1f5f9",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {stop.name ?? "停留所名不明"}
-        </span>
-        <span style={{ flexShrink: 0, display: "flex", gap: 6, alignItems: "center" }}>
-          {highlighted && (
-            <span
-              style={{
-                fontSize: 10,
-                padding: "1px 6px",
-                borderRadius: 999,
-                background: "#f59e0b",
-                color: "#111827",
-                fontWeight: 700,
-              }}
-            >
-              このバス停
-            </span>
-          )}
-          {busHere && (
-            <span style={{ fontSize: 11, color: "#fbbf24", fontWeight: 600 }}>
-              {busStatusText}
-            </span>
-          )}
-          {passed && <span style={{ fontSize: 11, color: doneColor }}>通過</span>}
-          {relative && (
-            <span style={{ fontSize: 11, color: "#94a3b8" }}>{relative}</span>
-          )}
-        </span>
       </div>
     </div>
   );

@@ -18,10 +18,10 @@ import {
   type RouteDot,
   type RouteGeometry,
   type RouteRun,
-  type RouteStop,
   type SegmentShapes,
 } from "@/app/lib/routeGeometry";
 import { busStatusText, relativeArrivalLabel } from "@/app/lib/stopStatus";
+import { remember, useTripStops } from "@/app/hooks/useTripStops";
 
 export interface MapPadding {
   top: number;
@@ -38,9 +38,20 @@ interface Props {
   // 選択した便の経路に表示範囲を合わせるときの余白。地図に重ねて表示する
   // バスの情報カードに隠れる部分を含める
   fitPadding?: MapPadding;
-  // 選んだ便の経路 (線・停留所の点・終点名) を表示するか。オフの間は経路の
-  // 情報 (/api/trip・/api/shape) も取得しない
+  // 選んだ便の経路 (線・停留所の点・終点名) を表示するか。オフの間は BusMap からは
+  // 経路の情報 (/api/trip・/api/shape) を取得しない (PC 版の到着予想の一覧は
+  // ページ側で取得する)
   showRoute?: boolean;
+  // 選んでいる停留所 (点を押すと名前と時刻の札が出る)。ページ側で持つ場合に渡す
+  // (PC 版: 到着予想の一覧と地図の点を連動させる)。渡さなければ BusMap の中で持つ
+  stopFocus?: StopFocus | null;
+  onStopFocusChange?: (focus: StopFocus | null) => void;
+}
+
+// 選んでいる停留所。from は選んだ場所 (一覧から選んだときは、点が見えるよう地図を動かす)
+export interface StopFocus {
+  seq: number;
+  from: "map" | "list";
 }
 
 // 表示範囲を合わせるときに、点の周りに確保する画面上の余白 (px)
@@ -72,6 +83,8 @@ export default function BusMap({
   mapId,
   fitPadding = DEFAULT_FIT_PADDING,
   showRoute = true,
+  stopFocus,
+  onStopFocusChange,
 }: Props) {
   const selected = useMemo(
     () => buses.find((b) => b["@id"] === selectedBusId) || null,
@@ -80,13 +93,21 @@ export default function BusMap({
 
   // 経路表示がオフの間は便を渡さない (経路の情報を取得せず、何も描かない)
   const tripId = showRoute ? selected?.tripId : undefined;
-  const tripStops = useTripStops(tripId);
+  const tripStops = useTripStops(tripId).data;
   const shape = useTripShapes(tripId);
   const graceOver = useGraceTimer(tripId);
   const showLines = shape.status !== "loading" || graceOver;
 
-  const [focusedSeq, setFocusedSeq] = useState<number | null>(null);
-  useEffect(() => setFocusedSeq(null), [selectedBusId, tripId]);
+  // 選んでいる停留所。ページ側で持つ場合 (onStopFocusChange あり) は、選択の
+  // 切り替え時などの解除もページ側で行う
+  const controlled = onStopFocusChange !== undefined;
+  const [innerSeq, setInnerSeq] = useState<number | null>(null);
+  useEffect(() => setInnerSeq(null), [selectedBusId, tripId]);
+  const focusedSeq = controlled ? (stopFocus?.seq ?? null) : innerSeq;
+  const changeFocus = (seq: number | null) => {
+    if (onStopFocusChange) onStopFocusChange(seq === null ? null : { seq, from: "map" });
+    else setInnerSeq(seq);
+  };
 
   const geometry = useMemo(() => {
     if (!selected || !tripStops || selected.stopSeq === undefined) return null;
@@ -120,7 +141,7 @@ export default function BusMap({
       gestureHandling="greedy"
       disableDefaultUI={false}
       clickableIcons={false}
-      onClick={() => setFocusedSeq(null)}
+      onClick={() => changeFocus(null)}
       style={{ width: "100%", height: "100%" }}
     >
       <SelectionCamera
@@ -130,13 +151,21 @@ export default function BusMap({
         padding={fitPadding}
       />
 
+      {controlled && (
+        <FocusReveal
+          focus={stopFocus ?? null}
+          dot={geometry?.dots.find((d) => d.seq === stopFocus?.seq) ?? null}
+          padding={fitPadding}
+        />
+      )}
+
       {geometry && selected && (
         <RouteOverlay
           geometry={geometry}
           showLines={showLines}
           bus={selected}
           focusedSeq={focusedSeq}
-          onFocusStop={(seq) => setFocusedSeq((cur) => (cur === seq ? null : seq))}
+          onFocusStop={(seq) => changeFocus(focusedSeq === seq ? null : seq)}
         />
       )}
 
@@ -194,84 +223,17 @@ export default function BusMap({
 }
 
 // ---------------------------------------------------------------------------
-// 便の停留所列・道路形状の取得 (便ごとにキャッシュし、同じ便を選び直しても再取得しない)
-
-interface TripStops {
-  tripId: string;
-  stops: RouteStop[];
-}
+// 便の道路形状の取得 (便ごとにキャッシュし、同じ便を選び直しても再取得しない)。
+// 停留所列の取得 (useTripStops) は PC 版の到着予想の一覧と共有する
 
 type ShapeState =
   | { tripId: string | undefined; status: "loading" }
   | { tripId: string | undefined; status: "ready"; shapes: SegmentShapes }
   | { tripId: string | undefined; status: "none" }; // 道路形状なし (おおよその経路で表示)
 
-const stopsCache = new globalThis.Map<string, TripStops>();
 const shapesCache = new globalThis.Map<string, SegmentShapes>();
 // サーバーに Routes API のキーが無い場合は以後問い合わせない
 let routesUnavailable = false;
-const CACHE_MAX = 50;
-
-function remember<V>(cache: globalThis.Map<string, V>, key: string, value: V) {
-  cache.set(key, value);
-  if (cache.size > CACHE_MAX) {
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) cache.delete(oldest);
-  }
-}
-
-function useTripStops(tripId: string | undefined): TripStops | null {
-  const [state, setState] = useState<TripStops | null>(null);
-  const [retry, setRetry] = useState(0);
-  useEffect(() => {
-    if (!tripId) return;
-    const cached = stopsCache.get(tripId);
-    if (cached) {
-      setState(cached);
-      return;
-    }
-    let alive = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    (async () => {
-      try {
-        const res = await fetch(`/api/trip?id=${encodeURIComponent(tripId)}`, {
-          cache: "no-store",
-        });
-        const data = await res.json();
-        if (!res.ok || !Array.isArray(data.stops)) throw new Error("trip");
-        const value: TripStops = {
-          tripId,
-          stops: data.stops.map((s: RouteStop) => ({
-            seq: s.seq,
-            stopId: s.stopId,
-            name: s.name,
-            lat: s.lat,
-            lng: s.lng,
-            scheduledSec: s.scheduledSec,
-          })),
-        };
-        // サーバーが静的 GTFS (停留所の座標) や時刻表を読めなかったときの
-        // 不完全な停留所列は使い回さず、1 分後に取り直す
-        const complete =
-          data.scheduleAvailable !== false &&
-          value.stops.filter((s) => s.lat !== undefined && s.lng !== undefined).length >= 2;
-        if (complete) remember(stopsCache, tripId, value);
-        if (alive) {
-          setState(value);
-          if (!complete) timer = setTimeout(() => setRetry((n) => n + 1), 60_000);
-        }
-      } catch {
-        // 一時的な失敗は 30 秒後に再試行
-        if (alive) timer = setTimeout(() => setRetry((n) => n + 1), 30_000);
-      }
-    })();
-    return () => {
-      alive = false;
-      if (timer) clearTimeout(timer);
-    };
-  }, [tripId, retry]);
-  return state && state.tripId === tripId ? state : null;
-}
 
 function useTripShapes(tripId: string | undefined): ShapeState {
   const [state, setState] = useState<ShapeState>({ tripId, status: "loading" });
@@ -456,12 +418,53 @@ function paddingWithClearance(
       if (c.right && width - x < c.right) p.right += (c.right - (width - x)) / Math.max(fx, 0.2);
     }
   }
-  // 地図が小さいときは経路を描く領域が残るよう、余白を縮める
+  return capPadding(p, width, height);
+}
+
+// 地図が小さいときは経路を描く領域が残るよう、余白を縮める (上下・左右それぞれ地図の 3/4 まで)
+function capPadding(p: MapPadding, width: number, height: number): MapPadding {
   const scale = (a: number, z: number, size: number) =>
     a + z > size * 0.75 ? (size * 0.75) / (a + z) : 1;
   const sy = scale(p.top, p.bottom, height);
   const sx = scale(p.left, p.right, width);
   return { top: p.top * sy, bottom: p.bottom * sy, left: p.left * sx, right: p.right * sx };
+}
+
+// 一覧から停留所を選んだとき、その点 (と上に出る名前の札) が地図の見える範囲に
+// 無ければ、最小限だけ地図を動かす。縮尺は変えない。選ぶたびに 1 回だけ動かし、
+// 点がまだ描かれていなければ描かれたときに動かす
+function FocusReveal({
+  focus,
+  dot,
+  padding,
+}: {
+  focus: StopFocus | null;
+  dot: LatLng | null;
+  padding: MapPadding;
+}) {
+  const map = useMap();
+  const revealed = useRef<StopFocus | null>(null);
+  useEffect(() => {
+    if (!map || !focus || focus.from !== "list" || !dot) return;
+    if (revealed.current === focus) return;
+    revealed.current = focus;
+    const div = map.getDiv();
+    // 札は点の上に出る (高さ 50px 程度・幅は名前次第で左右 100px 程度)
+    map.panToBounds(
+      { north: dot.lat, south: dot.lat, east: dot.lng, west: dot.lng },
+      capPadding(
+        {
+          top: padding.top + 56,
+          right: padding.right + 100,
+          bottom: padding.bottom,
+          left: padding.left + 100,
+        },
+        div.clientWidth,
+        div.clientHeight,
+      ),
+    );
+  }, [map, focus, dot, padding]);
+  return null;
 }
 
 // 終点名の札は点の右側に出る (文字幅は全角 1 文字 13px 程度で見積もる)

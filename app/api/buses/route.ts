@@ -92,9 +92,14 @@ export async function GET() {
               return st ? { lat: st.lat, lng: st.lng } : undefined;
             })
           : null;
-      // 経路表示は trip_update に停留所列がある便のみ (ハチ公バスは停留所情報を扱わない)
+      // 経路表示・到着予想は、trip_update に停留所列があり、車両が便の中の位置
+      // (current_stop_sequence) を送っている便のみ。便詳細 (/api/trip)・接近ボードと
+      // 同じ条件 (ハチ公バスは停留所情報を扱わない)
       const hasRoute =
-        !isHachiko && tripId !== undefined && (stopTimesByTrip.get(tripId)?.length ?? 0) > 0;
+        !isHachiko &&
+        tripId !== undefined &&
+        v.currentStopSequence !== undefined &&
+        (stopTimesByTrip.get(tripId)?.length ?? 0) > 0;
 
       if (isHachiko) hachikoActive = true;
       if (routeId && !isHachiko) usedRouteIds.add(routeId);

@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { APIProvider } from "@vis.gl/react-google-maps";
 import Link from "next/link";
 import BusMap, { type MapPadding } from "../components/BusMap";
 import MultiSelect from "../components/MultiSelect";
 import RouteToggle from "../components/RouteToggle";
+import TripDetailSheet from "../components/TripDetailSheet";
 import { useBusData } from "../hooks/useBusData";
 import { useShowRoute } from "../hooks/useShowRoute";
 import {
@@ -15,8 +16,9 @@ import {
 } from "../lib/format";
 import type { OdptBus } from "../types/odpt";
 
-// 便を選んだときに経路へ表示範囲を合わせる余白。下側は詳細カードに隠れる分を空ける
-const MAP_FIT_PADDING: MapPadding = { top: 50, right: 40, bottom: 200, left: 40 };
+// 便を選んだときに経路へ表示範囲を合わせる余白。下側は詳細カード (到着予想の
+// ボタンを含む) に隠れる分を空ける
+const MAP_FIT_PADDING: MapPadding = { top: 50, right: 40, bottom: 256, left: 40 };
 
 export default function MobilePage() {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "";
@@ -41,6 +43,11 @@ export default function MobilePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
   const [showRoute, setShowRoute] = useShowRoute();
+  // 「停留所ごとの到着予想」で開く便の詳細 (接近案内と同じシート)
+  const [openTrip, setOpenTrip] = useState<{ tripId: string; title?: string } | null>(null);
+  // シートの Esc・スクロール止めは onClose が変わるたびに付け直されるため、
+  // 30 秒ごとの再描画で変わらないようにする
+  const closeTrip = useCallback(() => setOpenTrip(null), []);
 
   const officeBuses = officeFilter
     ? buses.filter((b) => b.officeId === officeFilter)
@@ -187,6 +194,7 @@ export default function MobilePage() {
             stopMap={stopMap}
             officeMap={officeMap}
             onClose={() => setSelectedBusId(null)}
+            onOpenTrip={(tripId, title) => setOpenTrip({ tripId, title })}
           />
         ) : (
           <BottomSheet
@@ -206,6 +214,14 @@ export default function MobilePage() {
           </BottomSheet>
         )}
       </div>
+      {openTrip && (
+        <TripDetailSheet
+          key={openTrip.tripId}
+          tripId={openTrip.tripId}
+          fallbackTitle={openTrip.title}
+          onClose={closeTrip}
+        />
+      )}
     </div>
   );
 }
@@ -643,12 +659,14 @@ function BusDetailCard({
   stopMap,
   officeMap,
   onClose,
+  onOpenTrip,
 }: {
   bus: OdptBus;
   patternMap: Record<string, import("../types/odpt").OdptBusroutePattern>;
   stopMap: Record<string, { title: string; lat?: number; lng?: number }>;
   officeMap: Record<string, import("../types/odpt").OfficeEntry>;
   onClose: () => void;
+  onOpenTrip: (tripId: string, title?: string) => void;
 }) {
   const delay = classifyDelay(bus["odpt:delay"]);
   const pid = bus["odpt:busroutePattern"];
@@ -656,6 +674,7 @@ function BusDetailCard({
   const to = bus["odpt:toBusstopPole"];
   const toName = to ? stopMap[to]?.title || shortenStopId(to) : "—";
   const officeName = bus.officeId ? officeMap[bus.officeId]?.name : undefined;
+  const tripId = bus.tripId;
 
   return (
     <div
@@ -783,6 +802,38 @@ function BusDetailCard({
         <span style={{ color: "#64748b" }}>次の停留所: </span>
         <strong>{toName}</strong>
       </div>
+
+      {/* 停留所情報を扱わない便 (ハチ公バスなど) には出さない */}
+      {tripId && (
+        <button
+          type="button"
+          aria-haspopup="dialog"
+          onClick={() =>
+            onOpenTrip(tripId, (pid && patternMap[pid]?.["dc:title"]) || undefined)
+          }
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            width: "100%",
+            height: 44,
+            marginTop: 12,
+            padding: "0 14px",
+            background: "#1e293b",
+            border: "1px solid #334155",
+            borderRadius: 10,
+            color: "#f1f5f9",
+            fontSize: 14,
+            fontWeight: 600,
+            touchAction: "manipulation",
+          }}
+        >
+          <span>停留所ごとの到着予想</span>
+          <span aria-hidden="true" style={{ color: "#64748b", fontSize: 18 }}>
+            ›
+          </span>
+        </button>
+      )}
     </div>
   );
 }

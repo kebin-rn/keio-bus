@@ -32,3 +32,61 @@ export function busStatusText(beforeDeparture: boolean, stopped: boolean): strin
   if (beforeDeparture) return "発車前";
   return stopped ? "停車中" : "接近中";
 }
+
+// バスの現在位置の文 (便詳細シートの「🚌 現在」と地図の情報カードで共通)
+export function busPositionText(
+  name: string | null,
+  beforeDeparture: boolean,
+  stopped: boolean,
+): string {
+  const n = name ?? "停留所名不明";
+  if (beforeDeparture) return stopped ? `始発 ${n} で発車待ち` : `始発 ${n} に向かっています`;
+  return stopped ? `${n} に停車中` : `${n} に接近中`;
+}
+
+// 便の停留所一覧の 1 行 (停留所ごとの通過状況と到着予想)
+export interface TimelineStop {
+  seq: number;
+  stopId: string;
+  name: string | null; // 静的 GTFS に無い停留所は null (画面側で「停留所名不明」)
+  lat?: number;
+  lng?: number;
+  scheduledSec?: number; // 定刻 (0時起点の秒、24時超えあり)
+  predictedSec?: number; // 到着予想 = 定刻 + 便の現在の遅延 (未通過の停留所のみ)
+  state: "passed" | "current" | "upcoming";
+}
+
+// 停留所列とバスの現在位置・遅延から、停留所ごとの状況と到着予想を求める。
+// /api/trip と同じ規則 (現在位置より前は通過済み、未通過は 定刻 + 遅延)。
+// 地図の情報カードは /api/buses のバスの位置・遅延を使い、地図上の経路の
+// 通過済み/これからの塗り分けや停留所の時刻と揃える
+export function deriveTimeline(
+  stops: readonly {
+    seq: number;
+    stopId: string;
+    name: string | null;
+    lat?: number;
+    lng?: number;
+    scheduledSec?: number;
+  }[],
+  currentSeq: number,
+  delaySec: number,
+): TimelineStop[] {
+  return stops.map((s) => {
+    const state: TimelineStop["state"] =
+      s.seq < currentSeq ? "passed" : s.seq === currentSeq ? "current" : "upcoming";
+    return {
+      seq: s.seq,
+      stopId: s.stopId,
+      name: s.name,
+      lat: s.lat,
+      lng: s.lng,
+      scheduledSec: s.scheduledSec,
+      predictedSec:
+        state !== "passed" && s.scheduledSec !== undefined
+          ? s.scheduledSec + delaySec
+          : undefined,
+      state,
+    };
+  });
+}
