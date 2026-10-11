@@ -86,6 +86,7 @@ export default function TripTimeline({
     else if (e.key === "End") next = clickable[clickable.length - 1];
     else if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
+      setRovingSeq(seq);
       onSelectStop(seq);
       return;
     } else {
@@ -115,9 +116,17 @@ export default function TripTimeline({
       // 押せる行が無いときは、キーボードで一覧をスクロールできるよう一覧自体に移動できる
       tabIndex={clickable.length ? undefined : 0}
       onKeyDown={onKeyDown}
+      // Tab などで行に移ったら、その行を Tab の戻り先にする (更新でバスが進んだり
+      // 選択を外したりしても、フォーカスのある行から Tab の戻り先が離れないように)
+      onFocus={(e) => {
+        const seq = (e.target as HTMLElement).dataset.seq;
+        if (seq !== undefined) setRovingSeq(Number(seq));
+      }}
       style={{
         flex: "1 1 auto",
-        minHeight: 0,
+        // 地図が低い (画面を拡大している) ときも 3 行ほどは見えるようにする。
+        // 入りきらない分はカード全体をスクロールする
+        minHeight: empty ? 0 : Math.min(124, rows.length * 40 + 12),
         overflowY: "auto",
         overscrollBehavior: "contain",
         borderTop: "1px solid #e2e8f0",

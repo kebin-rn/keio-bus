@@ -69,7 +69,12 @@ export default function TripStopRow({
   // 行を押して地図でその停留所を表示する (PC 版の地図の情報カード)
   interactive?: { onSelect: () => void; tabIndex: 0 | -1 };
 }) {
-  const t = TOKENS[variant];
+  // 選んでいる行 (薄い青の地) では、小さい灰色・茶色の文字を濃くしてコントラストを保つ
+  const tinted = variant === "light" && focused;
+  const t = tinted
+    ? { ...TOKENS.light, passedText: "#475569", busStatus: "#92400e" }
+    : TOKENS[variant];
+  const noteColor = tinted ? "#475569" : "#64748b";
   const passed = stop.state === "passed";
   const busHere = live && stop.state === "current";
   const scheduled = formatEtaSec(stop.scheduledSec);
@@ -140,7 +145,7 @@ export default function TripStopRow({
               {predicted ?? "—"}
             </span>
             {scheduled && predicted && scheduled !== predicted && (
-              <span style={{ fontSize: 10, color: "#64748b" }}>定刻 {scheduled}</span>
+              <span style={{ fontSize: 10, color: noteColor }}>定刻 {scheduled}</span>
             )}
           </>
         )}

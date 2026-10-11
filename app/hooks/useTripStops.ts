@@ -16,6 +16,9 @@ const CACHE_MAX = 50;
 const stopsCache = new Map<string, TripStops>();
 // 同じ便を同時に求められたとき (地図と到着予想の一覧など) は 1 回の要求にまとめる
 const inflight = new Map<string, Promise<{ value: TripStops; complete: boolean }>>();
+// 停留所列がキャッシュに入ったときの通知先 (取得に失敗して再試行待ちの一覧が、
+// 地図側の取得で揃ったデータをすぐ使えるように)
+const listeners = new Map<string, Set<(value: TripStops) => void>>();
 
 export function remember<V>(cache: Map<string, V>, key: string, value: V) {
   cache.set(key, value);
@@ -50,7 +53,10 @@ function loadTripStops(tripId: string) {
     const complete =
       data.scheduleAvailable !== false &&
       value.stops.filter((s) => s.lat !== undefined && s.lng !== undefined).length >= 2;
-    if (complete) remember(stopsCache, tripId, value);
+    if (complete) {
+      remember(stopsCache, tripId, value);
+      listeners.get(tripId)?.forEach((notify) => notify(value));
+    }
     return { value, complete };
   })().finally(() => inflight.delete(tripId));
   inflight.set(tripId, request);
@@ -78,6 +84,14 @@ export function useTripStops(tripId: string | undefined): {
     }
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const onCached = (value: TripStops) => {
+      if (!alive) return;
+      if (timer) clearTimeout(timer);
+      setState({ tripId, data: value, failed: false });
+    };
+    let subscribers = listeners.get(tripId);
+    if (!subscribers) listeners.set(tripId, (subscribers = new Set()));
+    subscribers.add(onCached);
     loadTripStops(tripId).then(
       ({ value, complete }) => {
         if (!alive) return;
@@ -99,6 +113,8 @@ export function useTripStops(tripId: string | undefined): {
     return () => {
       alive = false;
       if (timer) clearTimeout(timer);
+      subscribers.delete(onCached);
+      if (subscribers.size === 0) listeners.delete(tripId);
     };
   }, [tripId, retry]);
 

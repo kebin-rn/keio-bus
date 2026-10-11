@@ -589,11 +589,12 @@ function SelectedBusCard({
         top: INFO_CARD_TOP,
         left: INFO_CARD_LEFT,
         width: INFO_CARD_WIDTH,
-        // 下に Google のロゴが見える程度の余白を残す
+        // 下に Google のロゴが見える程度の余白を残す。地図が低いときは一覧を縮め、
+        // それでも入りきらなければカード全体をスクロールする
         maxHeight: "calc(100% - 100px)",
         display: "flex",
         flexDirection: "column",
-        overflow: "hidden",
+        overflowY: "auto",
         zIndex: 5,
         background: "#ffffff",
         color: "#0f172a",

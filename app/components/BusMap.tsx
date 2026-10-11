@@ -165,7 +165,21 @@ export default function BusMap({
           showLines={showLines}
           bus={selected}
           focusedSeq={focusedSeq}
-          onFocusStop={(seq) => changeFocus(focusedSeq === seq ? null : seq)}
+          onFocusStop={(d) => {
+            // 同じ停留所に 2 回以上来る便 (循環路線) は、同じ位置に点が重なる。
+            // どの回の点が押されても、選んでいればその選択を解除し、選んでいなければ
+            // バスがいる回 → 次に着く回 → 最後の回 の順で選ぶ
+            const visits = geometry.dots.filter((x) => x.lat === d.lat && x.lng === d.lng);
+            if (visits.some((x) => x.seq === focusedSeq)) {
+              changeFocus(null);
+              return;
+            }
+            const pick =
+              visits.find((x) => x.state === "current") ??
+              visits.find((x) => x.state === "upcoming") ??
+              visits[visits.length - 1];
+            changeFocus(pick.seq);
+          }}
         />
       )}
 
@@ -339,12 +353,16 @@ function SelectionCamera({
         state.current.fitted = true;
         return;
       }
-      // 経路が届くまではバスの位置へ
+      // 経路が届くまで (経路表示がオフなら選んでいる間ずっと) はバスの位置へ。
+      // 情報カードなどに隠れないよう、padding の内側の中央にバスが来るようにする
       const lat = bus?.["geo:lat"];
       const lng = bus?.["geo:long"];
       if (lat !== undefined && lng !== undefined) {
-        map.panTo({ lat, lng });
-        if ((map.getZoom() ?? 11) < 14) map.setZoom(14);
+        const zoom = Math.max(map.getZoom() ?? 11, 14);
+        const div = map.getDiv();
+        const p = capPadding(padding, div.clientWidth, div.clientHeight);
+        if (zoom !== map.getZoom()) map.setZoom(zoom);
+        map.panTo(offsetByPixels({ lat, lng }, (p.right - p.left) / 2, (p.bottom - p.top) / 2, zoom));
       }
       return;
     }
@@ -449,22 +467,43 @@ function FocusReveal({
     if (revealed.current === focus) return;
     revealed.current = focus;
     const div = map.getDiv();
-    // 札は点の上に出る (高さ 50px 程度・幅は名前次第で左右 100px 程度)
     map.panToBounds(
       { north: dot.lat, south: dot.lat, east: dot.lng, west: dot.lng },
-      capPadding(
-        {
-          top: padding.top + 56,
-          right: padding.right + 100,
-          bottom: padding.bottom,
-          left: padding.left + 100,
-        },
-        div.clientWidth,
-        div.clientHeight,
-      ),
+      revealPadding(padding, div.clientWidth, div.clientHeight),
     );
   }, [map, focus, dot, padding]);
   return null;
+}
+
+// 一覧から選んだ停留所を見せるときの余白。名前の札は点の上に出る (高さ 56px 程度・
+// 幅は名前次第で左右 100px 程度) ので、その分を足す。狭い地図では札の分を減らし、
+// 情報カードなどの分 (base) は削らない (点がカードの下に残らないように)
+function revealPadding(base: MapPadding, width: number, height: number): MapPadding {
+  const MIN_FREE = 40;
+  const freeX = width - base.left - base.right;
+  const freeY = height - base.top - base.bottom;
+  if (freeX < MIN_FREE || freeY < MIN_FREE) return capPadding(base, width, height);
+  const sideX = Math.min(100, (freeX - MIN_FREE) / 2);
+  const topY = Math.min(56, freeY - MIN_FREE);
+  return {
+    top: base.top + topY,
+    right: base.right + sideX,
+    bottom: base.bottom,
+    left: base.left + sideX,
+  };
+}
+
+// 地図上の点を画面上で (dx, dy) px ずらした位置 (Web メルカトル、縮尺 zoom のとき)
+function offsetByPixels(p: LatLng, dx: number, dy: number, zoom: number): LatLng {
+  const scale = 256 * Math.pow(2, zoom);
+  const siny = Math.min(Math.max(Math.sin((p.lat * Math.PI) / 180), -0.9999), 0.9999);
+  const x = ((p.lng + 180) / 360) * scale + dx;
+  const y = (0.5 - Math.log((1 + siny) / (1 - siny)) / (4 * Math.PI)) * scale + dy;
+  const n = Math.PI - (2 * Math.PI * y) / scale;
+  return {
+    lat: (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))),
+    lng: (x / scale) * 360 - 180,
+  };
 }
 
 // 終点名の札は点の右側に出る (文字幅は全角 1 文字 13px 程度で見積もる)
@@ -487,7 +526,7 @@ function RouteOverlay({
   showLines: boolean;
   bus: OdptBus;
   focusedSeq: number | null;
-  onFocusStop: (seq: number) => void;
+  onFocusStop: (dot: RouteDot) => void;
 }) {
   const currentSeq = bus.stopSeq ?? 0;
   const beforeDeparture = bus.beforeDeparture ?? false;
@@ -511,7 +550,7 @@ function RouteOverlay({
           anchorPoint={AdvancedMarkerAnchorPoint.CENTER}
           zIndex={d.isTerminal || d.isOrigin ? 3 : 2}
           title={stopTooltip(d, delay)}
-          onClick={() => onFocusStop(d.seq)}
+          onClick={() => onFocusStop(d)}
         >
           <StopDot dot={d} />
         </AdvancedMarker>
